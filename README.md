@@ -24,6 +24,8 @@ Discovered strategies are validated by match play against a graded opponent popu
 
 See [docs/plan.md](docs/plan.md) for the full project plan and architecture.
 
+Component selections and Gate A evidence: [docs/component-evaluation.md](docs/component-evaluation.md); decision records in [docs/adr/](docs/adr/).
+
 ## Status
 
 Early development. The current milestone is the platform MVP: game framework, engine integration, corpus generation, annotation, persistence, and the strategy-evaluation harness. Heuristic mining and concept induction follow post-MVP.

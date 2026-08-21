@@ -1,0 +1,299 @@
+{
+  "header": {
+    "date": "2026-08-21",
+    "git_commit": "e59c6de486ffca5df18f7933aec816aa04c10c06",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "os": "Windows 11 Pro 10.0.26200",
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor (16 logical CPUs)",
+    "ram": "31 GiB",
+    "build_profile": "release",
+    "command": "cargo run --release --manifest-path spikes/throughput-spike/Cargo.toml -- --out C:\\Users\\John\\Projects\\strategy-discovery\\spikes\\throughput-spike/../../artifacts --games 200 --repeats 3 --seed 20260820"
+  },
+  "settings": {
+    "games_per_configuration": 200,
+    "repeats": 3,
+    "master_seed": 20260820,
+    "depths": [
+      2,
+      4,
+      9
+    ]
+  },
+  "results": [
+    {
+      "depth": 2,
+      "mode": "serial",
+      "threads": null,
+      "median_secs": 0.0062361,
+      "games_per_sec": 32071.32663042607,
+      "nodes_per_sec": 1358541.3960648484,
+      "speedup": 1.0,
+      "repeats_secs": [
+        0.0067004,
+        0.0059357,
+        0.0062361
+      ]
+    },
+    {
+      "depth": 2,
+      "mode": "parallel",
+      "threads": 1,
+      "median_secs": 0.0064853,
+      "games_per_sec": 30838.974295714925,
+      "nodes_per_sec": 1306338.951166484,
+      "speedup": 0.9615746380275392,
+      "repeats_secs": [
+        0.0064853,
+        0.006485,
+        0.0064909
+      ]
+    },
+    {
+      "depth": 2,
+      "mode": "parallel",
+      "threads": 2,
+      "median_secs": 0.0039493,
+      "games_per_sec": 50641.885903831055,
+      "nodes_per_sec": 2145190.2868862837,
+      "speedup": 1.5790393234244042,
+      "repeats_secs": [
+        0.0043136,
+        0.0039493,
+        0.0036076
+      ]
+    },
+    {
+      "depth": 2,
+      "mode": "parallel",
+      "threads": 4,
+      "median_secs": 0.0022839,
+      "games_per_sec": 87569.50829721091,
+      "nodes_per_sec": 3709444.371469854,
+      "speedup": 2.730461053461185,
+      "repeats_secs": [
+        0.0027001,
+        0.0021182,
+        0.0022839
+      ]
+    },
+    {
+      "depth": 2,
+      "mode": "parallel",
+      "threads": 8,
+      "median_secs": 0.0019523,
+      "games_per_sec": 102443.2720381089,
+      "nodes_per_sec": 4339497.003534293,
+      "speedup": 3.1942324437842546,
+      "repeats_secs": [
+        0.0018022,
+        0.0020639,
+        0.0019523
+      ]
+    },
+    {
+      "depth": 2,
+      "mode": "parallel",
+      "threads": 16,
+      "median_secs": 0.0017229,
+      "games_per_sec": 116083.3478437518,
+      "nodes_per_sec": 4917290.614661327,
+      "speedup": 3.619536827442103,
+      "repeats_secs": [
+        0.0017229,
+        0.0021552,
+        0.0016151
+      ]
+    },
+    {
+      "depth": 4,
+      "mode": "serial",
+      "threads": null,
+      "median_secs": 0.0363856,
+      "games_per_sec": 5496.680005276813,
+      "nodes_per_sec": 1794858.4055230643,
+      "speedup": 1.0,
+      "repeats_secs": [
+        0.0447977,
+        0.0353249,
+        0.0363856
+      ]
+    },
+    {
+      "depth": 4,
+      "mode": "parallel",
+      "threads": 1,
+      "median_secs": 0.0366854,
+      "games_per_sec": 5451.760100748526,
+      "nodes_per_sec": 1780190.4844979201,
+      "speedup": 0.9918278116089778,
+      "repeats_secs": [
+        0.0366854,
+        0.0361928,
+        0.0440316
+      ]
+    },
+    {
+      "depth": 4,
+      "mode": "parallel",
+      "threads": 2,
+      "median_secs": 0.0203842,
+      "games_per_sec": 9811.520687591368,
+      "nodes_per_sec": 3203804.907722648,
+      "speedup": 1.7849903356521224,
+      "repeats_secs": [
+        0.0203842,
+        0.01878,
+        0.0208088
+      ]
+    },
+    {
+      "depth": 4,
+      "mode": "parallel",
+      "threads": 4,
+      "median_secs": 0.0113794,
+      "games_per_sec": 17575.61910118284,
+      "nodes_per_sec": 5739054.783204739,
+      "speedup": 3.197497231839992,
+      "repeats_secs": [
+        0.0113304,
+        0.0115998,
+        0.0113794
+      ]
+    },
+    {
+      "depth": 4,
+      "mode": "parallel",
+      "threads": 8,
+      "median_secs": 0.0082443,
+      "games_per_sec": 24259.18513397135,
+      "nodes_per_sec": 7921473.017721335,
+      "speedup": 4.41342503305314,
+      "repeats_secs": [
+        0.009342,
+        0.0082443,
+        0.0077938
+      ]
+    },
+    {
+      "depth": 4,
+      "mode": "parallel",
+      "threads": 16,
+      "median_secs": 0.0067417,
+      "games_per_sec": 29666.10795496685,
+      "nodes_per_sec": 9687022.5610751,
+      "speedup": 5.397095688031209,
+      "repeats_secs": [
+        0.0065181,
+        0.007282,
+        0.0067417
+      ]
+    },
+    {
+      "depth": 9,
+      "mode": "serial",
+      "threads": null,
+      "median_secs": 0.2046734,
+      "games_per_sec": 977.1665492438196,
+      "nodes_per_sec": 4054532.73361365,
+      "speedup": 1.0,
+      "repeats_secs": [
+        0.2046734,
+        0.2089096,
+        0.2044511
+      ]
+    },
+    {
+      "depth": 9,
+      "mode": "parallel",
+      "threads": 1,
+      "median_secs": 0.2079989,
+      "games_per_sec": 961.5435466245254,
+      "nodes_per_sec": 3989708.599420478,
+      "speedup": 0.9840119346785008,
+      "repeats_secs": [
+        0.2102733,
+        0.2069763,
+        0.2079989
+      ]
+    },
+    {
+      "depth": 9,
+      "mode": "parallel",
+      "threads": 2,
+      "median_secs": 0.1164386,
+      "games_per_sec": 1717.6434618760445,
+      "nodes_per_sec": 7126975.075275725,
+      "speedup": 1.757779636649702,
+      "repeats_secs": [
+        0.1164386,
+        0.1148098,
+        0.1285736
+      ]
+    },
+    {
+      "depth": 9,
+      "mode": "parallel",
+      "threads": 4,
+      "median_secs": 0.0631923,
+      "games_per_sec": 3164.942564204816,
+      "nodes_per_sec": 13132217.058090936,
+      "speedup": 3.23889777710259,
+      "repeats_secs": [
+        0.0675517,
+        0.0631923,
+        0.0626947
+      ]
+    },
+    {
+      "depth": 9,
+      "mode": "parallel",
+      "threads": 8,
+      "median_secs": 0.0442652,
+      "games_per_sec": 4518.221989282778,
+      "nodes_per_sec": 18747345.544581298,
+      "speedup": 4.623799282506349,
+      "repeats_secs": [
+        0.0457801,
+        0.0415451,
+        0.0442652
+      ]
+    },
+    {
+      "depth": 9,
+      "mode": "parallel",
+      "threads": 16,
+      "median_secs": 0.0369755,
+      "games_per_sec": 5408.98703195359,
+      "nodes_per_sec": 22443374.667009234,
+      "speedup": 5.53537883192925,
+      "repeats_secs": [
+        0.0360267,
+        0.0369755,
+        0.0379593
+      ]
+    }
+  ],
+  "outcomes": [
+    {
+      "depth": 2,
+      "plies_total": 1718,
+      "x_wins": 41,
+      "o_wins": 0,
+      "draws": 159
+    },
+    {
+      "depth": 4,
+      "plies_total": 1800,
+      "x_wins": 0,
+      "o_wins": 0,
+      "draws": 200
+    },
+    {
+      "depth": 9,
+      "plies_total": 1800,
+      "x_wins": 0,
+      "o_wins": 0,
+      "draws": 200
+    }
+  ]
+}
