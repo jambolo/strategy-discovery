@@ -23,4 +23,10 @@ pub mod kinds {
     pub const RANDOM: &str = "random";
     /// Generic rule-interpreter over a [`crate::core::dsl::HeuristicStrategy`].
     pub const HEURISTIC_RULES: &str = "heuristic-rules";
+    /// Scripted (pre-recorded action list) strategy; test/debug aid, not spec-constructible.
+    pub const SCRIPTED: &str = "scripted";
+    /// Reserved: evolutionary strategy generator (plan.md Phase 8).
+    pub const EVOLUTIONARY: &str = "evolutionary";
+    /// Reserved: LLM-generated strategy (plan.md Phase 8).
+    pub const LLM: &str = "llm";
 }

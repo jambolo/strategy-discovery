@@ -1,8 +1,9 @@
 //! `game_player::State` adapter for the tic-tac-toe board, plus `Player` <-> `PlayerId`
-//! conversions. Bridges `Board`/`TicTacToeRules` to the `game-player` search engine without
-//! either side knowing about the other's abstractions.
+//! conversions and the `EngineGame` impl for `TicTacToe`. Bridges `Board`/`TicTacToeRules` to
+//! the `game-player` search engine without either side knowing about the other's abstractions.
 
-use super::board::{Board, Move, Player};
+use super::board::{Board, Move, Outcome, Player, TicTacToe};
+use crate::strategy::engine::EngineGame;
 use game_player::{PlayerId, State};
 
 impl From<Player> for PlayerId {
@@ -68,12 +69,40 @@ impl State for Board {
     }
 }
 
+impl EngineGame for TicTacToe {
+    /// `X` is the maximizing side (`Alice`), `O` is `Bob`.
+    fn player_id(player: Player) -> PlayerId {
+        player.into()
+    }
+
+    fn player_from_id(id: PlayerId) -> Player {
+        id.into()
+    }
+
+    fn winner(outcome: &Outcome) -> Option<Player> {
+        match outcome {
+            Outcome::Win(p) => Some(*p),
+            Outcome::Draw => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::core::traits::GameRules;
     use crate::games::tictactoe::rules::TicTacToeRules;
     use std::collections::HashSet;
+
+    #[test]
+    fn engine_game_mapping_for_tictactoe() {
+        assert_eq!(TicTacToe::player_id(Player::X), PlayerId::Alice);
+        assert_eq!(TicTacToe::player_id(Player::O), PlayerId::Bob);
+        assert_eq!(TicTacToe::player_from_id(PlayerId::Alice), Player::X);
+        assert_eq!(TicTacToe::player_from_id(PlayerId::Bob), Player::O);
+        assert_eq!(TicTacToe::winner(&Outcome::Win(Player::O)), Some(Player::O));
+        assert_eq!(TicTacToe::winner(&Outcome::Draw), None);
+    }
 
     #[test]
     fn player_to_player_id_conversions() {
