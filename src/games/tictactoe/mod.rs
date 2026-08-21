@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 pub mod board;
 pub mod canonical;
+pub mod corpus;
 pub mod engine;
 pub mod eval;
 pub mod features;
@@ -15,6 +16,7 @@ pub mod roster;
 pub mod rules;
 
 pub use board::{Board, LINES, Move, Outcome, Player, TicTacToe};
+pub use corpus::game_bundle;
 pub use eval::TicTacToeEvaluator;
 pub use roster::benchmark_roster;
 pub use rules::TicTacToeRules;

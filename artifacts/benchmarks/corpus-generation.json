@@ -1,0 +1,27 @@
+{
+  "header": { "date": "2026-08-21", "git_commit": "47535735fd212696a7bdaa04b3b50980e7d9c3ab", "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)", "os": "Windows 11 Pro 10.0.26200", "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor (16 logical CPUs)", "ram": "31 GiB", "build_profile": "release", "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File target/gate-b/bench.ps1" },
+  "config": { "base": "configs/tictactoe-default.toml", "override": { "games_per_cell": 200 }, "seed": 20260821, "cells": 49, "games": 9800, "positions": 75004, "run_id": "dea7db96340e923d", "repeats": 3 },
+  "generation": [
+    { "mode": "serial", "threads": 1, "wall_s": [13.316, 13.283, 13.359], "median_wall_s": 13.316, "games_per_s": 736.0 },
+    { "mode": "threads-4", "threads": 4, "wall_s": [4.164, 4.065, 4.114], "median_wall_s": 4.114, "games_per_s": 2381.9 },
+    { "mode": "parallel", "threads": 16, "wall_s": [2.131, 2.107, 2.103], "median_wall_s": 2.107, "games_per_s": 4651.8 }
+  ],
+  "output_files": {
+    "run.json": { "bytes": 13645 },
+    "games.jsonl": { "bytes": 6161570, "records": 9800 },
+    "positions.jsonl": { "bytes": 28003228, "records": 75004 },
+    "annotations.jsonl": { "bytes": 829583, "records": 2882 },
+    "annotate.json": { "bytes": 233 },
+    "summary.json": { "bytes": 9267 }
+  },
+  "stages": {
+    "annotate": { "wall_s": [0.143, 0.142, 0.154], "median_wall_s": 0.143, "annotated": 2882, "terminal": 0, "disagreements": 0 },
+    "analyze": { "wall_s": [0.171, 0.169, 0.159], "median_wall_s": 0.169, "games": 9800, "distinct_games": 3225, "canonical_coverage": 0.935, "decisive_fraction": 0.510, "diversity_pass": false, "diversity_pass_with_min_distinct_0_3": true },
+    "exhaustive": { "wall_s": [0.053, 0.057, 0.053], "median_wall_s": 0.053, "annotated": 5478, "terminal": 958, "disagreements": 0, "annotations_jsonl_bytes": 1570396 }
+  },
+  "corpus_bench": ["[bench] corpus games/s serial=733 parallel=3768 games=980 positions=7491 write_ms=260.1", "[bench] summary read+aggregate ms=22.8 distinct_games=606"],
+  "phase3_reference": {
+    "record_format": { "records": 76409, "jsonl_bytes": 22658488, "jsonl_write_ms": 51.627, "jsonl_read_ms": 58.468, "serde_aggregation_ms": 71.203 },
+    "selfplay_throughput_depth9": { "serial_games_per_s": 977.2, "threads_16_games_per_s": 5409.0 }
+  }
+}

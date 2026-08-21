@@ -85,6 +85,19 @@ impl<G: EngineGame> StaticEvaluator for AliceEvaluator<'_, G> {
     }
 }
 
+/// Evaluator returning the same value for every non-terminal state and perspective: a
+/// "no heuristic" variant under which depth-limited search sees every non-terminal leaf as
+/// equal, so seeded-uniform tie-breaking spreads play widely (a corpus-diversity lever).
+/// Terminal values are still supplied by [`AliceEvaluator`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ConstantEvaluator(pub f32);
+
+impl<G: GameDomain> StateEvaluator<G> for ConstantEvaluator {
+    fn evaluate(&self, _state: &G::State, _perspective: G::Player) -> f32 {
+        self.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,5 +186,36 @@ mod tests {
 
         assert_eq!(search(&sef, &rg, &Board::parse("XX.OO....").unwrap(), 1), Some(Move(2)));
         assert_eq!(search(&sef, &rg, &Board::parse("XXXOO....").unwrap(), 1), None);
+    }
+
+    #[test]
+    fn constant_evaluator_returns_its_constant() {
+        let zero = ConstantEvaluator(0.0);
+        assert_eq!(
+            <ConstantEvaluator as StateEvaluator<TicTacToe>>::evaluate(&zero, &Board::empty(), Player::X),
+            0.0
+        );
+        assert_eq!(
+            <ConstantEvaluator as StateEvaluator<TicTacToe>>::evaluate(&zero, &Board::empty(), Player::O),
+            0.0
+        );
+
+        let c = ConstantEvaluator(2.5);
+        assert_eq!(
+            <ConstantEvaluator as StateEvaluator<TicTacToe>>::evaluate(&c, &Board::empty(), Player::X),
+            2.5
+        );
+        assert_eq!(
+            <ConstantEvaluator as StateEvaluator<TicTacToe>>::evaluate(&c, &Board::empty(), Player::O),
+            2.5
+        );
+    }
+
+    #[test]
+    fn constant_evaluator_keeps_terminal_values_through_alice_evaluator() {
+        let eval = ConstantEvaluator(0.0);
+        let alice_eval = AliceEvaluator::<TicTacToe>::new(&TicTacToeRules, &eval);
+        assert_eq!(alice_eval.evaluate(&Board::parse("XXXOO....").unwrap()), 100.0);
+        assert_eq!(alice_eval.evaluate(&Board::empty()), 0.0);
     }
 }

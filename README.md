@@ -24,7 +24,7 @@ Discovered strategies are validated by match play against a graded opponent popu
 
 See [docs/plan.md](docs/plan.md) for the full project plan and architecture.
 
-Component selections and Gate A evidence: [docs/component-evaluation.md](docs/component-evaluation.md); decision records in [docs/adr/](docs/adr/).
+Component selections and evaluation-gate evidence (Gate A, Gate B): [docs/component-evaluation.md](docs/component-evaluation.md); decision records in [docs/adr/](docs/adr/).
 
 ## Status
 
@@ -41,14 +41,36 @@ Requires stable Rust (edition 2024).
 
 ## Usage
 
-Once the CLI lands, each pipeline stage is a subcommand:
+Each pipeline stage is a subcommand that reads and writes files, so stages can be re-run independently:
 
 ```sh
-cargo run -- generate --config <file>
-cargo run -- annotate ...
-cargo run -- analyze ...
-cargo run -- report --input <path>
+# 1. generate a corpus from a sweep config (7 roster strategies -> 49 pairings x 20 games = 980 games)
+cargo run --release -- generate --config configs/tictactoe-default.toml --out runs/ttt-default
+
+# 2. annotate every distinct position of that corpus with exhaustive-solver values and a game-player cross-check
+cargo run --release -- annotate --corpus runs/ttt-default
+
+# 3. summarize the corpus; --strict exits 2 when the diversity thresholds fail
+cargo run --release -- analyze --corpus runs/ttt-default --strict
+
+# tic-tac-toe only: annotate all 5478 reachable positions (a small-game accelerant)
+cargo run --release -- annotate --exhaustive --game tictactoe --out runs/ttt-exhaustive
 ```
+
+`generate` accepts `--serial` or `--threads N` (execution knobs only: outputs are byte-identical for the same config and seed). `analyze` accepts `--min-coverage`, `--min-decisive` and `--min-distinct` to override the default diversity thresholds (0.5 / 0.2 / 0.5). `annotate` accepts `--engine-depth` (default: the game's full search depth, 9 for tic-tac-toe). Each stage prints one summary line to stdout. `report` arrives with Phase 6.
+
+A run directory contains:
+
+| file | written by | contents |
+| --- | --- | --- |
+| `run.json` | generate | run metadata: `run_id` (hash of the resolved config), the resolved config, cells, totals |
+| `games.jsonl` | generate | one `GameRecord` per game: cell, seed, strategy specs, action list, outcome, final state |
+| `positions.jsonl` | generate | one `PositionRecord` per ply: state, canonical state and transform, legal actions, chosen action, who chose it |
+| `annotations.jsonl` | annotate | one `AnnotationRecord` per distinct state: game-theoretic value, optimal actions, engine action, agreement |
+| `annotate.json` | annotate | annotation metadata: mode, engine depth, counts, disagreements |
+| `summary.json` | analyze | outcome distributions (by pairing, length, ply, first-move orbit) and the diversity metrics |
+
+The sweep config format is the one in `configs/tictactoe-default.toml` (TOML: strategies, pairings, evaluators, openings, random opening plies, seed). Record schema and run-directory layout: [docs/adr/0009-corpus-record-schema.md](docs/adr/0009-corpus-record-schema.md).
 
 ## License
 

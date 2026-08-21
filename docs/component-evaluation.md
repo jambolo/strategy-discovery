@@ -32,6 +32,10 @@ Citation convention: `<artifact path> § <H2 section>, <row/field> (<number>)`, 
 | artifacts/benchmarks/selfplay-throughput.md | spikes/throughput-spike | Gate A row 3 |
 | artifacts/reproducibility/annotation-determinism.md | spikes/annotate-spike | Gate A row 3 |
 | artifacts/reproducibility/selfplay-serial-vs-parallel.md | spikes/throughput-spike | Gate A row 3 |
+| artifacts/benchmarks/corpus-generation.md | src/cli release runs (Phase 5, 9800 games) | Gate B rows 3, 4 |
+| artifacts/benchmarks/corpus-generation.json | src/cli release runs (Phase 5, 9800 games) | Gate B row 4 (raw data backing corpus-generation.md) |
+| artifacts/reproducibility/corpus-determinism.md | src/cli release runs (Phase 5, 9800 games) | Gate B rows 1, 5 |
+| artifacts/reproducibility/corpus-diversity.md | src/cli release runs (Phase 5, 980 games × seeds 1-3 + draws control) | Gate B rows 2, 5 |
 
 ## Matrix 1 - Dataframe/query layer
 
@@ -122,7 +126,7 @@ Tier: JSONL 4.40 → default; Parquet 3.40 → experimental.
 
 - polars 0.55.x performance (did not compile on rustc 1.94.1)
 
-- Parquet and JSONL repeat-write byte identity
+- Parquet repeat-write byte identity (JSONL repeat-write byte identity measured in Gate B: artifacts/reproducibility/corpus-determinism.md)
 
 - cross-machine numbers
 
@@ -136,3 +140,17 @@ Tier: JSONL 4.40 → default; Parquet 3.40 → experimental.
 | 4 | Gate A: analysis-stack selection completed | PASS | `## Selected defaults` above |
 
 Gate A verdict: PASS
+
+## Gate B
+
+| # | plan Phase 5 acceptance check | result | evidence |
+| --- | --- | --- | --- |
+| 1 | CLI batch run emits result files; the same seed reproduces byte-identical outputs | PASS | tests/cli_pipeline.rs (generate → annotate → analyze through the built binary emit run.json, games.jsonl, positions.jsonl, annotations.jsonl, annotate.json, summary.json); tests/corpus.rs `same_seed_is_byte_identical`, `serial_equals_parallel`, `defaults_spelled_out_produce_same_run_id`; artifacts/reproducibility/corpus-determinism.md § Result — 9800 games, SHA-256 identical for same seed ×2, --serial vs --threads 4 vs default pool, annotate ×2, annotate --exhaustive ×2, analyze ×2: all identical: YES |
+| 2 | Across different seeds, corpus diversity metrics exceed configured thresholds (canonical-position coverage and a healthy decisive-game mix; identical perfect-play draws fail) | PASS | artifacts/reproducibility/corpus-diversity.md § Result — default config (980 games) seeds 1 / 2 / 3: canonical_coverage 0.6013 / 0.6118 / 0.6065, decisive_fraction 0.5224 / 0.5204 / 0.5112, distinct_game_fraction 0.5908 / 0.5878 / 0.6255, diversity_pass true against 0.5 / 0.2 / 0.5, --strict exit 0; generate-draws.toml negative control: distinct_games 1, decisive_fraction 0.0000, diversity_pass false, --strict exit 2; tests/corpus.rs `diversity_thresholds_pass_across_seeds`, `diversity_catches_identical_perfect_play` |
+| 3 | Annotation pass labels a generated corpus and, for tic-tac-toe, can label every reachable position | PASS | tests/annotate.rs `exhaustive_annotation_covers_all_positions` (5478 records, 958 terminal, 0 disagreements, X wins 2936 / draw 1068 / O wins 1474), `corpus_annotation_labels_every_distinct_state`, `solver_facts`; artifacts/benchmarks/corpus-generation.md § Annotate and analyze — 9800-game corpus: 2882 distinct states annotated, 0 disagreements, median 0.143 s; exhaustive 5478 / 958 terminal / 0 disagreements, median 0.053 s |
+| 4 | Evaluation Gate B criteria pass for selected components (plan Phase 5 step 6: component checkpoints re-run at real corpus size) | PASS | JSONL (ADR 0007): artifacts/benchmarks/corpus-generation.md § Output files — 9800 games / 75004 position records, games.jsonl 6161570 bytes, positions.jsonl 28003228 bytes, written inside generate (§ Generation: serial 736.0 games/s, threads-4 2381.9 games/s, parallel 4651.8 games/s); serde + BTreeMap aggregation (ADR 0004 / ADR 0005): § Annotate and analyze — analyze (read 9800 games + 75004 positions, aggregate, write summary.json) median 0.169 s vs Phase 3 spike read 58.468 ms + aggregation 71.203 ms at 76409 records, § Comparison: same order of magnitude YES; exhaustive solver + game-player cross-check (ADR 0001): 0 disagreements over all 5478 positions and over the 2882 corpus states; docs/adr/0009-corpus-record-schema.md records the schema v1 these runs used |
+| 5 | Gate B (plan line 274): corpus generation and annotation validated under repeat runs — seeded reproducibility plus diversity thresholds | PASS | rows 1-3: artifacts/reproducibility/corpus-determinism.md (all identical: YES) + artifacts/reproducibility/corpus-diversity.md (seeds 1-3 PASS, draws control FAIL as required) |
+
+Scale note: at 9800 games (`games_per_cell = 200`) the default `min_distinct_game_fraction = 0.5` is not met — 3225 distinct games = 0.329 (artifacts/benchmarks/corpus-generation.md § Diversity at 9800 games) — while canonical_coverage 0.935 and decisive_fraction 0.510 pass. The distinct-game fraction of a finite game falls as games per cell grow (low-entropy cells such as perfect-vs-perfect repeat lines while absolute coverage rises to 715 of 765 canonical positions), so the Gate B diversity claim is made at the default `games_per_cell = 20` and larger runs set `--min-distinct` to scale (0.3 passes at 9800 games). Not a threshold weakening: the default thresholds and `configs/tictactoe-default.toml` are unchanged.
+
+Gate B verdict: PASS

@@ -2,7 +2,7 @@
 
 #[test]
 fn cli_bootstrap_runs() {
-    assert!(strategy_discovery::cli::run().is_ok());
+    assert!(strategy_discovery::cli::run_from(["strategy-discovery"]).is_ok());
 }
 
 #[test]

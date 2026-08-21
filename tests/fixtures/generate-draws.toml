@@ -1,0 +1,12 @@
+schema_version = 1
+game = "tictactoe"
+seed = 20260821
+games_per_cell = 16
+pairings = [["perfect-engine", "perfect-engine"]]
+
+[[strategies]]
+name = "perfect-engine"
+[strategies.spec]
+kind = "minimax"
+depth = 9
+tie_break = "engine"

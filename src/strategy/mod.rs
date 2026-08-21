@@ -8,7 +8,7 @@ pub mod registry;
 pub mod roster;
 pub mod scripted;
 
-pub use engine::{AliceEvaluator, EngineGame, RulesResponseGenerator, WIN_VALUE};
+pub use engine::{AliceEvaluator, ConstantEvaluator, EngineGame, RulesResponseGenerator, WIN_VALUE};
 pub use minimax::{MinimaxConfig, MinimaxProvider, MinimaxStrategy, TieBreak, root_values};
 pub use random::{RandomProvider, RandomStrategy};
 pub use registry::{EngineBundle, Factory, StrategyRegistry, StrategySpec};

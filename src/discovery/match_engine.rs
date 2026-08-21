@@ -5,7 +5,11 @@
 use crate::core::traits::{
     GameDomain, GameRules, MatchConfig, MatchEngine, MatchError, MatchRecord, StrategyError, StrategyProvider,
 };
+use rand::SeedableRng;
+use rand::seq::IndexedRandom;
+use rand_chacha::ChaCha8Rng;
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// SplitMix64 mixing function: deterministic, well-distributed 64-bit hash used to derive
@@ -33,7 +37,46 @@ pub fn player_seed(game_seed: u64, slot: usize) -> u64 {
     splitmix64(game_seed ^ (slot as u64 + 1).wrapping_mul(0xD1B54A32D192ED03))
 }
 
-/// Plays one game to completion (or to `max_plies`) and returns its record.
+/// Forced start of a game: a fixed action prefix followed by `random_plies` uniformly random
+/// legal plies drawn from an RNG seeded by [`opening_seed`], before the strategies take over.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Opening<A> {
+    /// Actions applied verbatim from the initial state.
+    #[serde(default = "Vec::new")]
+    pub actions: Vec<A>,
+    /// Number of uniformly random legal plies played after `actions`.
+    #[serde(default)]
+    pub random_plies: u32,
+}
+
+impl<A> Default for Opening<A> {
+    fn default() -> Self {
+        Opening {
+            actions: Vec::new(),
+            random_plies: 0,
+        }
+    }
+}
+
+/// Salt mixed into a game's seed to derive its opening RNG seed.
+pub const OPENING_SEED_SALT: u64 = 0xA0761D6478BD642F;
+
+/// Seed of the random-opening RNG for a game: `splitmix64(game_seed ^ OPENING_SEED_SALT)`.
+pub fn opening_seed(game_seed: u64) -> u64 {
+    splitmix64(game_seed ^ OPENING_SEED_SALT)
+}
+
+/// Plies of `record` that were played by `opening` (fixed prefix + random plies), capped by the
+/// game's length.
+pub fn opening_plies_played<A, O>(record: &MatchRecord<A, O>, opening: &Opening<A>) -> usize {
+    record
+        .actions
+        .len()
+        .min(opening.actions.len() + opening.random_plies as usize)
+}
+
+/// Plays one game to completion (or to `max_plies`) and returns its record. A thin wrapper over
+/// [`play_game_with_opening`] with an empty (no-op) [`Opening`].
 ///
 /// One strategy instance is created per entry in `players` (even entries never reached, e.g. a
 /// player who never gets a turn on this game's path), seeded with `player_seed(game_seed, slot)`
@@ -47,6 +90,28 @@ pub fn play_game<G: GameDomain>(
     game_seed: u64,
     max_plies: Option<usize>,
 ) -> Result<MatchRecord<G::Action, G::Outcome>, MatchError> {
+    play_game_with_opening(rules, players, game_index, game_seed, max_plies, &Opening::default())
+}
+
+/// Plays one game to completion (or to `max_plies`) starting from a forced `opening`, and returns
+/// its record.
+///
+/// Strategy instances are created first, exactly as in [`play_game`], seeded with
+/// `player_seed(game_seed, slot)` before any opening ply is played, so a given `game_seed`
+/// reproduces bit-for-bit whether or not an opening is applied. `opening.actions` is then applied
+/// verbatim from the initial state, followed by `opening.random_plies` uniformly random legal
+/// plies drawn from an RNG seeded by `opening_seed(game_seed)`. Play then proceeds as in
+/// [`play_game`], continuing from the resulting state. An illegal or post-terminal action in
+/// `opening.actions` surfaces as [`MatchError::Rules`].
+#[allow(clippy::type_complexity)]
+pub fn play_game_with_opening<G: GameDomain>(
+    rules: &dyn GameRules<G>,
+    players: &[(G::Player, &dyn StrategyProvider<G>)],
+    game_index: usize,
+    game_seed: u64,
+    max_plies: Option<usize>,
+    opening: &Opening<G::Action>,
+) -> Result<MatchRecord<G::Action, G::Outcome>, MatchError> {
     let mut strategies: Vec<_> = players
         .iter()
         .enumerate()
@@ -55,6 +120,28 @@ pub fn play_game<G: GameDomain>(
 
     let mut state = rules.initial_state();
     let mut actions = Vec::new();
+
+    for action in &opening.actions {
+        if max_plies.is_some_and(|m| actions.len() >= m) {
+            break;
+        }
+        state = rules.apply(&state, action)?;
+        actions.push(action.clone());
+    }
+
+    if opening.random_plies > 0 {
+        let mut rng = ChaCha8Rng::seed_from_u64(opening_seed(game_seed));
+        for _ in 0..opening.random_plies {
+            let legal = rules.legal_actions(&state);
+            if legal.is_empty() || max_plies.is_some_and(|m| actions.len() >= m) {
+                break;
+            }
+            let action = legal.choose(&mut rng).expect("legal is non-empty").clone();
+            state = rules.apply(&state, &action)?;
+            actions.push(action);
+        }
+    }
+
     let outcome = loop {
         let legal = rules.legal_actions(&state);
         if legal.is_empty() {
@@ -88,11 +175,13 @@ pub fn play_game<G: GameDomain>(
 
 /// `MatchEngine` running games over rayon: serially, on rayon's global pool, or on a private pool
 /// of a fixed size. Every mode produces byte-identical `MatchRecord`s for the same config and
-/// providers (ADR 0002); thread count is a performance knob only.
+/// providers (ADR 0002); thread count is a performance knob only. Every game is played from
+/// [`opening`](RayonMatchEngine::opening), which defaults to an empty (no-op) [`Opening`].
 pub struct RayonMatchEngine<G: GameDomain> {
     rules: Arc<dyn GameRules<G>>,
     threads: Option<usize>,
     parallel: bool,
+    opening: Opening<G::Action>,
 }
 
 impl<G: GameDomain> RayonMatchEngine<G> {
@@ -102,6 +191,7 @@ impl<G: GameDomain> RayonMatchEngine<G> {
             rules,
             threads: None,
             parallel: true,
+            opening: Opening::default(),
         }
     }
 
@@ -113,6 +203,7 @@ impl<G: GameDomain> RayonMatchEngine<G> {
             rules,
             threads: Some(n),
             parallel: true,
+            opening: Opening::default(),
         }
     }
 
@@ -122,6 +213,7 @@ impl<G: GameDomain> RayonMatchEngine<G> {
             rules,
             threads: None,
             parallel: false,
+            opening: Opening::default(),
         }
     }
 
@@ -133,6 +225,17 @@ impl<G: GameDomain> RayonMatchEngine<G> {
     /// Whether this engine runs games in parallel.
     pub fn is_parallel(&self) -> bool {
         self.parallel
+    }
+
+    /// Sets the forced opening every game played by this engine starts from.
+    pub fn with_opening(mut self, opening: Opening<G::Action>) -> Self {
+        self.opening = opening;
+        self
+    }
+
+    /// The forced opening every game played by this engine starts from.
+    pub fn opening(&self) -> &Opening<G::Action> {
+        &self.opening
     }
 }
 
@@ -146,14 +249,14 @@ impl<G: GameDomain> MatchEngine<G> for RayonMatchEngine<G> {
 
         if !self.parallel {
             return (0..config.games)
-                .map(|i| play_game(rules, players, i, game_seed(config.seed, i), config.max_plies))
+                .map(|i| play_game_with_opening(rules, players, i, game_seed(config.seed, i), config.max_plies, &self.opening))
                 .collect();
         }
 
         let run_parallel = || {
             (0..config.games)
                 .into_par_iter()
-                .map(|i| play_game(rules, players, i, game_seed(config.seed, i), config.max_plies))
+                .map(|i| play_game_with_opening(rules, players, i, game_seed(config.seed, i), config.max_plies, &self.opening))
                 .collect()
         };
 
@@ -486,5 +589,174 @@ mod tests {
         let deterministic_record = &engine.run(&config, deterministic_players).unwrap()[0];
 
         assert_ne!(random_record.actions, deterministic_record.actions);
+    }
+
+    #[test]
+    fn opening_seed_reference_values() {
+        assert_eq!(opening_seed(0), 0x4396D60DBD8537AF);
+        assert_eq!(opening_seed(42), 0xC549D6F38899C014);
+        assert_eq!(opening_seed(0xBDD732262FEB6E95), 0x5A0ECCCE1EDF2C68);
+    }
+
+    #[test]
+    fn play_game_equals_play_game_with_default_opening() {
+        let rules = TicTacToeRules;
+        let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, &SeededRandom), (Player::O, &SeededRandom)];
+
+        for game_seed in [0u64, 1, 42, 0xBDD732262FEB6E95] {
+            let plain = play_game(&rules, players, 0, game_seed, None).unwrap();
+            let with_opening = play_game_with_opening(&rules, players, 0, game_seed, None, &Opening::default()).unwrap();
+            assert_eq!(plain, with_opening);
+        }
+    }
+
+    #[test]
+    fn fixed_opening_prefix_is_played_verbatim() {
+        let rules = TicTacToeRules;
+        let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, &FirstLegal), (Player::O, &FirstLegal)];
+        let opening = Opening {
+            actions: vec![Move(4), Move(0)],
+            random_plies: 0,
+        };
+
+        let record = play_game_with_opening(&rules, players, 0, 0, None, &opening).unwrap();
+        assert_eq!(&record.actions[..2], &[Move(4), Move(0)]);
+        assert_eq!(record.actions[2], Move(1));
+        assert!(record.outcome.is_some());
+        assert_eq!(opening_plies_played(&record, &opening), 2);
+    }
+
+    #[test]
+    fn illegal_opening_prefix_is_a_rules_error() {
+        let rules = TicTacToeRules;
+        let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, &FirstLegal), (Player::O, &FirstLegal)];
+
+        let opening = Opening {
+            actions: vec![Move(4), Move(4)],
+            random_plies: 0,
+        };
+        let err = play_game_with_opening(&rules, players, 0, 0, None, &opening).unwrap_err();
+        assert!(matches!(err, MatchError::Rules(_)));
+
+        let opening = Opening {
+            actions: vec![Move(9)],
+            random_plies: 0,
+        };
+        let err = play_game_with_opening(&rules, players, 0, 0, None, &opening).unwrap_err();
+        assert!(matches!(err, MatchError::Rules(_)));
+    }
+
+    #[test]
+    fn max_plies_counts_opening_plies() {
+        let rules = TicTacToeRules;
+        let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, &FirstLegal), (Player::O, &FirstLegal)];
+        let opening = Opening {
+            actions: vec![Move(4), Move(0), Move(1)],
+            random_plies: 0,
+        };
+
+        let record = play_game_with_opening(&rules, players, 0, 0, Some(2), &opening).unwrap();
+        assert_eq!(record.actions, vec![Move(4), Move(0)]);
+        assert_eq!(record.outcome, None);
+        assert_eq!(opening_plies_played(&record, &opening), 2);
+    }
+
+    #[test]
+    fn random_opening_plies_are_seed_reproducible_and_vary_across_seeds() {
+        let rules = TicTacToeRules;
+        let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, &FirstLegal), (Player::O, &FirstLegal)];
+        let opening = Opening {
+            actions: vec![],
+            random_plies: 2,
+        };
+
+        let mut first_moves = std::collections::HashSet::new();
+        for game_seed in 0u64..16 {
+            let a = play_game_with_opening(&rules, players, 0, game_seed, None, &opening).unwrap();
+            let b = play_game_with_opening(&rules, players, 0, game_seed, None, &opening).unwrap();
+            assert_eq!(a, b);
+            assert_eq!(opening_plies_played(&a, &opening), 2);
+            assert!(a.actions.len() >= 2);
+            first_moves.insert(a.actions[0]);
+        }
+        assert!(first_moves.len() >= 2);
+
+        let no_random_opening = Opening {
+            actions: vec![],
+            random_plies: 0,
+        };
+        for game_seed in 0u64..16 {
+            let record = play_game_with_opening(&rules, players, 0, game_seed, None, &no_random_opening).unwrap();
+            assert_eq!(record.actions[0], Move(0));
+        }
+    }
+
+    #[test]
+    fn random_opening_stops_at_terminal() {
+        let rules = TicTacToeRules;
+        let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, &FirstLegal), (Player::O, &FirstLegal)];
+        // X wins on the fixed prefix alone: X plays 0,3,1,4 -> row 2,4,6? Let's use a known win line 0,4,2 for X.
+        let opening = Opening {
+            actions: vec![Move(0), Move(3), Move(1), Move(4), Move(2)],
+            random_plies: 3,
+        };
+
+        let record = play_game_with_opening(&rules, players, 0, 0, None, &opening).unwrap();
+        assert_eq!(record.actions.len(), 5);
+        assert_eq!(record.outcome, Some(Outcome::Win(Player::X)));
+        assert_eq!(opening_plies_played(&record, &opening), 5);
+    }
+
+    #[test]
+    fn engine_with_opening_is_serial_parallel_identical() {
+        let opening = Opening {
+            actions: vec![Move(4)],
+            random_plies: 2,
+        };
+        let config = MatchConfig {
+            games: 32,
+            seed: 7,
+            max_plies: None,
+        };
+        let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, &SeededRandom), (Player::O, &SeededRandom)];
+
+        let serial = RayonMatchEngine::serial(Arc::new(TicTacToeRules) as Arc<dyn GameRules<TicTacToe>>)
+            .with_opening(opening.clone())
+            .run(&config, players)
+            .unwrap();
+        let threaded = RayonMatchEngine::with_threads(Arc::new(TicTacToeRules) as Arc<dyn GameRules<TicTacToe>>, 4)
+            .with_opening(opening.clone())
+            .run(&config, players)
+            .unwrap();
+        let global = RayonMatchEngine::new(Arc::new(TicTacToeRules) as Arc<dyn GameRules<TicTacToe>>)
+            .with_opening(opening.clone())
+            .run(&config, players)
+            .unwrap();
+
+        assert_eq!(serial, threaded);
+        assert_eq!(serial, global);
+        for record in &serial {
+            assert_eq!(record.actions[0], Move(4));
+        }
+
+        let engine =
+            RayonMatchEngine::serial(Arc::new(TicTacToeRules) as Arc<dyn GameRules<TicTacToe>>).with_opening(opening.clone());
+        assert_eq!(engine.opening(), &opening);
+
+        let default_engine = RayonMatchEngine::serial(Arc::new(TicTacToeRules) as Arc<dyn GameRules<TicTacToe>>);
+        assert_eq!(default_engine.opening(), &Opening::default());
+    }
+
+    #[test]
+    fn opening_serde_shape() {
+        let opening = Opening {
+            actions: vec![Move(4)],
+            random_plies: 2,
+        };
+        assert_eq!(
+            serde_json::to_string(&opening).unwrap(),
+            r#"{"actions":[4],"random_plies":2}"#
+        );
+        assert_eq!(serde_json::from_str::<Opening<Move>>("{}").unwrap(), Opening::default());
     }
 }
