@@ -1,6 +1,6 @@
 //! The tic-tac-toe [`GameBundle`]: rules, `[X, O]`, evaluators `default` (open-lines heuristic) and
 //! `zero` (`ConstantEvaluator(0.0)`), the D4 canonicalizer and primitives, the benchmark roster as
-//! default strategies, exhaustive depth 9 and 765 known canonical positions.
+//! both `default_strategies` and `roster`, exhaustive depth 9 and 765 known canonical positions.
 
 use super::board::{Player, TicTacToe};
 use super::canonical::TicTacToeCanonicalizer;
@@ -19,6 +19,8 @@ pub fn game_bundle() -> GameBundle<TicTacToe> {
     evaluators.insert("default".to_string(), Arc::new(TicTacToeEvaluator) as Arc<_>);
     evaluators.insert("zero".to_string(), Arc::new(ConstantEvaluator(0.0)) as Arc<_>);
 
+    let roster = benchmark_roster();
+
     GameBundle {
         name: "tictactoe".to_string(),
         rules: Arc::new(TicTacToeRules),
@@ -27,7 +29,8 @@ pub fn game_bundle() -> GameBundle<TicTacToe> {
         default_evaluator: "default".to_string(),
         canonicalizer: Some(Arc::new(TicTacToeCanonicalizer::new())),
         primitives: Some(Arc::new(TicTacToePrimitives)),
-        default_strategies: benchmark_roster().entries,
+        default_strategies: roster.entries.clone(),
+        roster,
         full_search_depth: 9,
         known_canonical_positions: Some(765),
     }
@@ -103,5 +106,15 @@ mod tests {
         let bundle = game_bundle();
         assert_eq!(bundle.player_slot(Player::X), Some(0));
         assert_eq!(bundle.player_slot(Player::O), Some(1));
+    }
+
+    #[test]
+    fn bundle_roster_is_the_versioned_benchmark_population() {
+        let bundle = game_bundle();
+
+        assert_eq!(bundle.roster.id(), "ttt-benchmark-v1");
+        assert_eq!(bundle.roster.entries, bundle.default_strategies);
+        assert_eq!(bundle.roster.entries.len(), 7);
+        assert_eq!(bundle.roster.entries.last().unwrap().name, "perfect");
     }
 }

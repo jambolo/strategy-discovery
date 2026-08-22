@@ -1,0 +1,19 @@
+name = "tiny"
+version = 1
+
+[[entries]]
+name = "random"
+[entries.spec]
+kind = "random"
+
+[[entries]]
+name = "depth-2"
+[entries.spec]
+kind = "minimax"
+depth = 2
+
+[[entries]]
+name = "perfect"
+[entries.spec]
+kind = "minimax"
+depth = 9

@@ -1,14 +1,14 @@
-//! Game bundle: everything the corpus, annotation and summary stages need from a game.
+//! Game bundle: everything the corpus, annotation, evaluation and summary stages need from a game.
 
 use crate::core::traits::{Canonicalize, GamePrimitives, GameRules, StateEvaluator};
 use crate::discovery::config::CorpusError;
 use crate::strategy::engine::EngineGame;
 use crate::strategy::registry::EngineBundle;
-use crate::strategy::roster::RosterEntry;
+use crate::strategy::roster::{Roster, RosterEntry};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Everything the corpus, annotation and summary stages need from a game.
+/// Everything the corpus, annotation, evaluation and summary stages need from a game.
 pub struct GameBundle<G: EngineGame> {
     /// The game's name; must equal `GenerateConfig.game`.
     pub name: String,
@@ -26,6 +26,9 @@ pub struct GameBundle<G: EngineGame> {
     pub primitives: Option<Arc<dyn GamePrimitives<G>>>,
     /// Default benchmark strategies for this game.
     pub default_strategies: Vec<RosterEntry>,
+    /// Versioned benchmark population the evaluation harness plays against; `roster.id()` is the
+    /// provenance `roster_id` of archived results.
+    pub roster: Roster,
     /// Engine depth that is exhaustive for this game.
     pub full_search_depth: u32,
     /// Coverage denominator: number of known canonical positions, if known.

@@ -72,8 +72,10 @@ mod tests {
 
     #[test]
     fn init_twice_is_harmless() {
-        init(1, false);
+        // The first `init` wins process-wide, so install `error` first to keep lib test
+        // stderr free of INFO lines; the second call is then a no-op.
         init(0, true);
+        init(1, false);
         tracing::info!("logging smoke");
     }
 }

@@ -1,0 +1,252 @@
+{
+  "header": {
+    "date": "2026-08-23",
+    "git_commit": "fc3d6cdd01614bfd27c9e5f861d81b8347990a55",
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)",
+    "os": "Windows 11 Pro 10.0.26200",
+    "cpu": "AMD Ryzen 7 7800X3D 8-Core Processor (16 logical CPUs)",
+    "ram": "31 GiB",
+    "build_profile": "release",
+    "command": "pwsh -NoProfile -ExecutionPolicy Bypass -File target/m1/tournament-throughput.ps1"
+  },
+  "config": {
+    "roster": "ttt-benchmark-v1",
+    "opponents": 7,
+    "seats": 2,
+    "pairings": 14,
+    "strategies_file": "tests/fixtures/strategies-eval.toml",
+    "strategies": 3,
+    "repeats": 3,
+    "bench_games_per_pairing": 20,
+    "cli_games_per_pairing": 100,
+    "cli_games": 4200,
+    "exhaustive_positions": 4520
+  },
+  "tournament_bench": [
+    {
+      "mode": "serial",
+      "threads": "1",
+      "games": 280,
+      "plies": 2338,
+      "games_per_s": [
+        273.7,
+        259.0,
+        268.1
+      ],
+      "median_games_per_s": 268.1,
+      "us_per_move": [
+        437.6,
+        462.4,
+        446.6
+      ],
+      "median_us_per_move": 446.6,
+      "speedup": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "median_speedup": 1.0
+    },
+    {
+      "mode": "pool",
+      "threads": "global",
+      "games": 280,
+      "plies": 2338,
+      "games_per_s": [
+        1507.1,
+        1560.6,
+        1635.3
+      ],
+      "median_games_per_s": 1560.6,
+      "us_per_move": [
+        79.5,
+        76.7,
+        73.2
+      ],
+      "median_us_per_move": 76.7,
+      "speedup": [
+        5.51,
+        6.03,
+        6.1
+      ],
+      "median_speedup": 6.03
+    },
+    {
+      "mode": "threads",
+      "threads": "2",
+      "games": 280,
+      "plies": 2338,
+      "games_per_s": [
+        504.6,
+        499.7,
+        495.4
+      ],
+      "median_games_per_s": 499.7,
+      "us_per_move": [
+        237.4,
+        239.7,
+        241.8
+      ],
+      "median_us_per_move": 239.7,
+      "speedup": [
+        1.84,
+        1.93,
+        1.85
+      ],
+      "median_speedup": 1.85
+    },
+    {
+      "mode": "threads",
+      "threads": "4",
+      "games": 280,
+      "plies": 2338,
+      "games_per_s": [
+        935.5,
+        894.3,
+        923.6
+      ],
+      "median_games_per_s": 923.6,
+      "us_per_move": [
+        128.0,
+        133.9,
+        129.7
+      ],
+      "median_us_per_move": 129.7,
+      "speedup": [
+        3.42,
+        3.45,
+        3.44
+      ],
+      "median_speedup": 3.44
+    },
+    {
+      "mode": "threads",
+      "threads": "8",
+      "games": 280,
+      "plies": 2338,
+      "games_per_s": [
+        1378.3,
+        1406.8,
+        1400.1
+      ],
+      "median_games_per_s": 1400.1,
+      "us_per_move": [
+        86.9,
+        85.1,
+        85.5
+      ],
+      "median_us_per_move": 85.5,
+      "speedup": [
+        5.04,
+        5.43,
+        5.22
+      ],
+      "median_speedup": 5.22
+    }
+  ],
+  "tournament_bench_agreement_corpus": {
+    "positions": 390,
+    "rate": 1.0,
+    "positions_per_s": [
+      45001.0,
+      41649.0,
+      42668.0
+    ],
+    "median_positions_per_s": 42668.0
+  },
+  "evaluate_cli": [
+    {
+      "mode": "serial",
+      "threads": 1,
+      "games": 4200,
+      "wall_s": [
+        7.166,
+        6.991,
+        6.945
+      ],
+      "median_wall_s": 6.991,
+      "games_per_s": 600.8
+    },
+    {
+      "mode": "threads-1",
+      "threads": 1,
+      "games": 4200,
+      "wall_s": [
+        6.607,
+        6.641,
+        6.648
+      ],
+      "median_wall_s": 6.641,
+      "games_per_s": 632.4
+    },
+    {
+      "mode": "threads-2",
+      "threads": 2,
+      "games": 4200,
+      "wall_s": [
+        3.976,
+        3.842,
+        3.86
+      ],
+      "median_wall_s": 3.86,
+      "games_per_s": 1088.1
+    },
+    {
+      "mode": "threads-4",
+      "threads": 4,
+      "games": 4200,
+      "wall_s": [
+        2.122,
+        2.143,
+        2.143
+      ],
+      "median_wall_s": 2.143,
+      "games_per_s": 1959.9
+    },
+    {
+      "mode": "threads-8",
+      "threads": 8,
+      "games": 4200,
+      "wall_s": [
+        1.255,
+        1.265,
+        1.353
+      ],
+      "median_wall_s": 1.265,
+      "games_per_s": 3320.2
+    },
+    {
+      "mode": "pool",
+      "threads": 16,
+      "games": 4200,
+      "wall_s": [
+        1.127,
+        1.098,
+        1.112
+      ],
+      "median_wall_s": 1.112,
+      "games_per_s": 3777.0
+    }
+  ],
+  "agreement_exhaustive": {
+    "strategies": 3,
+    "positions": 13560,
+    "wall_s": [
+      0.053,
+      0.053,
+      0.08
+    ],
+    "median_wall_s": 0.053,
+    "positions_per_s": 255849.0
+  },
+  "evaluate_full": {
+    "games": 4200,
+    "annotations": "exhaustive",
+    "wall_s": [
+      1.153,
+      1.101,
+      1.115
+    ],
+    "median_wall_s": 1.115
+  }
+}

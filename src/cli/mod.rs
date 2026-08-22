@@ -1,16 +1,17 @@
 //! Command-line entry points — one subcommand per pipeline stage.
 //!
-//! Each subcommand lives in its own file (`play`, `generate`, `annotate`, `analyze`, `report`,
-//! `pipeline`); [`games`] is the only non-test place in the crate allowed to name a concrete
+//! Each subcommand lives in its own file (`play`, `generate`, `annotate`, `analyze`, `evaluate`,
+//! `report`, `pipeline`); [`games`] is the only non-test place in the crate allowed to name a concrete
 //! game. The global `-v`/`--verbose` and `-q`/`--quiet` flags (see [`logging`]) control stderr
 //! log verbosity for every subcommand.
 //!
 //! Process exit code: 0 success, 1 runtime failure, 2 invalid invocation or input, 3 a requested
-//! check failed (`analyze --strict`); see [`error`] for the classification.
+//! check failed (`analyze --strict`, `evaluate --strict`); see [`error`] for the classification.
 
 mod analyze;
 mod annotate;
 pub mod error;
+mod evaluate;
 pub mod games;
 mod generate;
 pub mod logging;
@@ -103,6 +104,8 @@ pub enum Command {
         #[arg(long)]
         strict: bool,
     },
+    /// Evaluate strategies against the game's benchmark roster and archive the results.
+    Evaluate(evaluate::EvaluateArgs),
     /// Render a Markdown report from a run directory or a single analyzer output file.
     Report(report::ReportArgs),
     /// Run a configured experiment end to end.
@@ -160,6 +163,7 @@ where
             min_distinct,
             strict,
         ),
+        Some(Command::Evaluate(args)) => evaluate::run(args),
         Some(Command::Report(args)) => report::run(args),
         Some(Command::Pipeline(args)) => pipeline::run(args),
     }

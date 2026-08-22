@@ -1,0 +1,18 @@
+schema_version = 1
+
+[[strategies]]
+name = "perfect"
+[strategies.spec]
+kind = "minimax"
+depth = 9
+
+[[strategies]]
+name = "random"
+[strategies.spec]
+kind = "random"
+
+[[strategies]]
+name = "depth-3"
+[strategies.spec]
+kind = "minimax"
+depth = 3
