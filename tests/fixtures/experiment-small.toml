@@ -1,0 +1,23 @@
+# Small end-to-end experiment over the generate-small sweep; tests always override `out`.
+schema_version = 1
+name = "experiment-small"
+game = "tictactoe"
+out = "runs/experiment-small"
+
+[generate]
+sweep = "generate-small.toml"
+
+[annotate]
+enabled = true
+
+[analyze]
+analyzers = ["summary", "agreement"]
+strict = false
+
+[analyze.thresholds]
+min_canonical_coverage = 0.25
+min_decisive_fraction = 0.2
+min_distinct_game_fraction = 0.5
+
+[report]
+out = "report.md"

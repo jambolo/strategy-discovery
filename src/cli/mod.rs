@@ -1,24 +1,36 @@
 //! Command-line entry points — one subcommand per pipeline stage.
 //!
-//! This module is the composition root: it is the only non-test place in the crate allowed to
-//! name a concrete game. Everything else (`core`, `discovery`, `io`) stays generic over
-//! `EngineGame + CorpusGame`; here a `--game` name (or a config/manifest's `game` field) is
-//! resolved to a concrete [`crate::discovery::GameBundle`] before calling into the pipeline.
+//! Each subcommand lives in its own file (`play`, `generate`, `annotate`, `analyze`, `report`,
+//! `pipeline`); [`games`] is the only non-test place in the crate allowed to name a concrete
+//! game. The global `-v`/`--verbose` and `-q`/`--quiet` flags (see [`logging`]) control stderr
+//! log verbosity for every subcommand.
+//!
+//! Process exit code: 0 success, 1 runtime failure, 2 invalid invocation or input, 3 a requested
+//! check failed (`analyze --strict`); see [`error`] for the classification.
 
-use crate::discovery::annotate::DEFAULT_SOLVER_LIMIT;
-use crate::discovery::config::GenerateConfig;
-use crate::discovery::{
-    AnnotateMetadata, AnnotateMode, AnnotateOptions, CorpusSummary, DiversityThresholds, GenerateOptions, analyze_corpus,
-    annotate_corpus, annotate_exhaustive, generate,
-};
-use anyhow::Context;
+mod analyze;
+mod annotate;
+pub mod error;
+pub mod games;
+mod generate;
+pub mod logging;
+pub mod pipeline;
+pub mod play;
+pub mod report;
+
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Top-level command line.
 #[derive(Parser, Debug)]
 #[command(name = "strategy-discovery", version, about)]
 pub struct Cli {
+    /// Increase stderr log verbosity: `-v` info, `-vv` debug, `-vvv` trace (default: warnings only).
+    #[arg(short, long, global = true, action = clap::ArgAction::Count)]
+    pub verbose: u8,
+    /// Log errors only on stderr; conflicts with `--verbose`.
+    #[arg(short, long, global = true, conflicts_with = "verbose")]
+    pub quiet: bool,
     /// Pipeline stage to run; omitted prints the crate name and version.
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -27,6 +39,8 @@ pub struct Cli {
 /// One subcommand per pipeline stage.
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Play games between named strategies and print a transcript.
+    Play(play::PlayArgs),
     /// Generate a corpus from a TOML config into an output directory.
     Generate {
         /// Path to the sweep configuration TOML file.
@@ -61,11 +75,21 @@ pub enum Command {
         #[arg(long)]
         engine_depth: Option<u32>,
     },
-    /// Summarize a corpus into `summary.json`; `--strict` exits 2 when diversity fails.
+    /// Run analyzers over a corpus run directory; `--strict` exits 3 when a check fails.
     Analyze {
-        /// Corpus run directory to summarize.
+        /// Corpus run directory to analyze; required unless `--list-analyzers` is set.
         #[arg(long)]
-        corpus: PathBuf,
+        corpus: Option<PathBuf>,
+        /// Game whose analyzer registry to use; defaults to the corpus's own game, or to the
+        /// first known game when only listing analyzers.
+        #[arg(long)]
+        game: Option<String>,
+        /// Comma-separated analyzer names to run, in order; defaults to `summary`.
+        #[arg(long)]
+        analyzers: Option<String>,
+        /// Print one `name<TAB>description` line per registered analyzer and exit.
+        #[arg(long)]
+        list_analyzers: bool,
         /// Minimum fraction of known canonical positions the corpus must cover.
         #[arg(long)]
         min_coverage: Option<f64>,
@@ -75,21 +99,14 @@ pub enum Command {
         /// Minimum fraction of games that must have a distinct action sequence.
         #[arg(long)]
         min_distinct: Option<f64>,
-        /// Exit with status 2 when the corpus fails its diversity thresholds.
+        /// Exit with status 3 when the corpus fails its diversity thresholds.
         #[arg(long)]
         strict: bool,
     },
-}
-
-/// The one field of a config or manifest needed to pick a game bundle.
-#[derive(serde::Deserialize)]
-struct GameName {
-    game: String,
-}
-
-/// Error message for a `--game`/config `game` value that names no known game bundle.
-fn unknown_game(name: &str) -> anyhow::Error {
-    anyhow::anyhow!("unknown game `{name}`; known games: tictactoe")
+    /// Render a Markdown report from a run directory or a single analyzer output file.
+    Report(report::ReportArgs),
+    /// Run a configured experiment end to end.
+    Pipeline(pipeline::PipelineArgs),
 }
 
 /// Runs the CLI over the process arguments.
@@ -104,148 +121,46 @@ where
     T: Into<std::ffi::OsString> + Clone,
 {
     let cli = Cli::parse_from(args);
+    logging::init(cli.verbose, cli.quiet);
     match cli.command {
         None => {
             println!("{} {}", crate::NAME, crate::VERSION);
             Ok(())
         }
+        Some(Command::Play(args)) => play::run(args),
         Some(Command::Generate {
             config,
             out,
             threads,
             serial,
-        }) => run_generate(&config, &out, threads, serial),
+        }) => generate::run(&config, &out, threads, serial),
         Some(Command::Annotate {
             corpus,
             exhaustive,
             game,
             out,
             engine_depth,
-        }) => run_annotate(corpus, exhaustive, game, out, engine_depth),
+        }) => annotate::run(corpus, exhaustive, game, out, engine_depth),
         Some(Command::Analyze {
             corpus,
+            game,
+            analyzers,
+            list_analyzers,
             min_coverage,
             min_decisive,
             min_distinct,
             strict,
-        }) => run_analyze(&corpus, min_coverage, min_decisive, min_distinct, strict),
+        }) => analyze::run(
+            corpus,
+            game,
+            analyzers,
+            list_analyzers,
+            min_coverage,
+            min_decisive,
+            min_distinct,
+            strict,
+        ),
+        Some(Command::Report(args)) => report::run(args),
+        Some(Command::Pipeline(args)) => pipeline::run(args),
     }
-}
-
-/// Runs the `generate` subcommand.
-fn run_generate(config_path: &Path, out: &Path, threads: Option<usize>, serial: bool) -> anyhow::Result<()> {
-    let text = std::fs::read_to_string(config_path).with_context(|| format!("reading config file `{}`", config_path.display()))?;
-    let header: GameName = toml::from_str(&text).with_context(|| format!("parsing config file `{}`", config_path.display()))?;
-
-    let options = GenerateOptions { threads, serial };
-
-    match header.game.as_str() {
-        "tictactoe" => {
-            let config = GenerateConfig::<crate::games::tictactoe::Move>::from_toml_str(&text)?;
-            let metadata = generate(&crate::games::tictactoe::game_bundle(), config, &options, out)?;
-            println!(
-                "run_id={} cells={} games={} positions={} out={}",
-                metadata.run_id,
-                metadata.cells.len(),
-                metadata.games,
-                metadata.positions,
-                out.display()
-            );
-            Ok(())
-        }
-        other => Err(unknown_game(other)),
-    }
-}
-
-/// Runs the `annotate` subcommand.
-fn run_annotate(
-    corpus: Option<PathBuf>,
-    exhaustive: bool,
-    game: Option<String>,
-    out: Option<PathBuf>,
-    engine_depth: Option<u32>,
-) -> anyhow::Result<()> {
-    let options = AnnotateOptions {
-        engine_depth,
-        solver_limit: DEFAULT_SOLVER_LIMIT,
-    };
-
-    let (mode, metadata) = if exhaustive {
-        let game = game.ok_or_else(|| anyhow::anyhow!("--exhaustive requires --game"))?;
-        let out = out.ok_or_else(|| anyhow::anyhow!("--exhaustive requires --out"))?;
-        let metadata = match game.as_str() {
-            "tictactoe" => annotate_exhaustive(&crate::games::tictactoe::game_bundle(), &out, &options)?,
-            other => return Err(unknown_game(other)),
-        };
-        ("exhaustive", metadata)
-    } else {
-        let corpus = corpus.ok_or_else(|| anyhow::anyhow!("annotate requires --corpus (or --exhaustive)"))?;
-        let run_path = corpus.join("run.json");
-        let header: GameName =
-            crate::io::read_json(&run_path).with_context(|| format!("reading run manifest `{}`", run_path.display()))?;
-        let metadata = match header.game.as_str() {
-            "tictactoe" => annotate_corpus(&crate::games::tictactoe::game_bundle(), &corpus, &options)?,
-            other => return Err(unknown_game(other)),
-        };
-        ("corpus", metadata)
-    };
-
-    print_annotate_result(mode, &metadata);
-    Ok(())
-}
-
-/// Prints the one-line `annotate` result summary.
-fn print_annotate_result(mode: &str, metadata: &AnnotateMetadata) {
-    debug_assert!(matches!(
-        (mode, metadata.mode),
-        ("corpus", AnnotateMode::Corpus) | ("exhaustive", AnnotateMode::Exhaustive)
-    ));
-    println!(
-        "mode={} annotated={} terminal={} disagreements={}",
-        mode, metadata.annotated, metadata.terminal, metadata.disagreements
-    );
-}
-
-/// Runs the `analyze` subcommand.
-fn run_analyze(
-    corpus: &Path,
-    min_coverage: Option<f64>,
-    min_decisive: Option<f64>,
-    min_distinct: Option<f64>,
-    strict: bool,
-) -> anyhow::Result<()> {
-    let run_path = corpus.join("run.json");
-    let header: GameName =
-        crate::io::read_json(&run_path).with_context(|| format!("reading run manifest `{}`", run_path.display()))?;
-
-    let mut thresholds = DiversityThresholds::default();
-    if let Some(v) = min_coverage {
-        thresholds.min_canonical_coverage = v;
-    }
-    if let Some(v) = min_decisive {
-        thresholds.min_decisive_fraction = v;
-    }
-    if let Some(v) = min_distinct {
-        thresholds.min_distinct_game_fraction = v;
-    }
-
-    let summary: CorpusSummary = match header.game.as_str() {
-        "tictactoe" => analyze_corpus(&crate::games::tictactoe::game_bundle(), corpus, &thresholds)?,
-        other => return Err(unknown_game(other)),
-    };
-
-    println!(
-        "games={} distinct_games={} canonical_coverage={:.3} decisive_fraction={:.3} diversity_pass={}",
-        summary.games,
-        summary.distinct_games,
-        summary.canonical_coverage.unwrap_or(0.0),
-        summary.decisive_fraction,
-        summary.diversity_pass
-    );
-
-    if strict && !summary.diversity_pass {
-        std::process::exit(2);
-    }
-
-    Ok(())
 }

@@ -19,7 +19,7 @@ cargo test                  # all tests
 cargo test <name>           # single test or module (e.g. cargo test ttt)
 cargo fmt --all --check     # format check (CI-enforced on PRs)
 cargo clippy --workspace --all-targets --all-features -- -D warnings   # lint (CI-enforced; warnings are errors)
-cargo run -- <subcommand>   # CLI stages once implemented: play, generate, annotate, analyze, report
+cargo run -- <subcommand>   # CLI stages: play, generate, annotate, analyze, report, pipeline
 ```
 
 Rust edition 2024, stable toolchain. CI runs build + test on Ubuntu and Windows; fmt/clippy run on pull requests only, but run them locally before pushing.

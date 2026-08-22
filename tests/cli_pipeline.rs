@@ -1,5 +1,6 @@
 //! End-to-end CLI tests: spawn the built binary and drive `generate -> annotate -> analyze`,
-//! plus the `--strict` exit code and the no-subcommand banner.
+//! the no-subcommand banner, and the exit-code taxonomy (0 success, 1 runtime failure,
+//! 2 usage/input error, 3 a requested check failed — see `cli::error`).
 
 use std::path::{Path, PathBuf};
 
@@ -53,16 +54,17 @@ fn pipeline_generate_annotate_analyze() {
 }
 
 #[test]
-fn strict_analyze_exits_two_on_undiverse_corpus() {
-    let dir = out_dir("strict_analyze_exits_two_on_undiverse_corpus");
+fn strict_analyze_exits_three_on_undiverse_corpus() {
+    let dir = out_dir("strict_analyze_exits_three_on_undiverse_corpus");
     let dir_str = dir.to_str().expect("temp path is utf-8");
 
     let (code, _stdout, _stderr) = cli(&["generate", "--config", "tests/fixtures/generate-draws.toml", "--out", dir_str]);
     assert_eq!(code, 0);
 
-    let (code, stdout, _stderr) = cli(&["analyze", "--corpus", dir_str, "--strict"]);
-    assert_eq!(code, 2);
+    let (code, stdout, stderr) = cli(&["analyze", "--corpus", dir_str, "--strict"]);
+    assert_eq!(code, 3);
     assert!(stdout.contains("diversity_pass=false"), "stdout: {stdout}");
+    assert!(stderr.contains("decisive_fraction 0.00 < 0.20"), "stderr: {stderr}");
 }
 
 #[test]
@@ -92,7 +94,7 @@ fn missing_config_file_is_an_error() {
     let dir_str = dir.to_str().expect("temp path is utf-8");
 
     let (code, _stdout, stderr) = cli(&["generate", "--config", "tests/fixtures/does-not-exist.toml", "--out", dir_str]);
-    assert_ne!(code, 0);
+    assert_eq!(code, 2);
     assert!(stderr.contains("error:"), "stderr: {stderr}");
     assert!(stderr.contains("does-not-exist.toml"), "stderr: {stderr}");
 }
@@ -103,6 +105,31 @@ fn unknown_game_is_rejected() {
     let dir_str = dir.to_str().expect("temp path is utf-8");
 
     let (code, _stdout, stderr) = cli(&["annotate", "--exhaustive", "--game", "chess", "--out", dir_str]);
-    assert_ne!(code, 0);
+    assert_eq!(code, 2);
     assert!(stderr.contains("unknown game"), "stderr: {stderr}");
+}
+
+#[test]
+fn malformed_toml_is_rejected() {
+    let dir = out_dir("malformed_toml_is_rejected");
+
+    let config_path = dir.join("bad.toml");
+    std::fs::write(&config_path, "schema_version = 1\ngame = \"tictactoe\"\nseed = [\n").unwrap();
+    let config_str = config_path.to_str().expect("temp path is utf-8");
+    let out_path = dir.join("run");
+    let out_str = out_path.to_str().expect("temp path is utf-8");
+
+    let (code, _stdout, stderr) = cli(&["generate", "--config", config_str, "--out", out_str]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("bad.toml"), "stderr: {stderr}");
+}
+
+#[test]
+fn analyze_missing_corpus_is_rejected() {
+    let dir = out_dir("analyze_missing_corpus_is_rejected");
+    let dir_str = dir.to_str().expect("temp path is utf-8");
+
+    let (code, _stdout, stderr) = cli(&["analyze", "--corpus", dir_str]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("run.json"), "stderr: {stderr}");
 }

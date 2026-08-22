@@ -209,9 +209,14 @@ impl<G: EngineGame> Strategy<G> for MinimaxStrategy<G> {
         let rg = RulesResponseGenerator::new(rules);
 
         match self.config.tie_break {
-            TieBreak::Engine => Ok(search(&sef, &rg, state, self.config.depth).expect("non-terminal state has a move")),
+            TieBreak::Engine => {
+                let action = search(&sef, &rg, state, self.config.depth).expect("non-terminal state has a move");
+                tracing::trace!(chosen = ?action, "minimax engine tie-break");
+                Ok(action)
+            }
             TieBreak::SeededUniform => {
                 let values = root_values(rules, evaluator, state, legal, self.config.depth);
+                tracing::trace!(values = ?values, "minimax root values");
                 let maximize = G::player_id(rules.player_to_move(state)) == PlayerId::Alice;
                 let best = if maximize {
                     values.iter().map(|(_, v)| *v).max_by(f32::total_cmp)
@@ -224,7 +229,9 @@ impl<G: EngineGame> Strategy<G> for MinimaxStrategy<G> {
                     .filter(|(_, v)| v.total_cmp(&best) == Ordering::Equal)
                     .map(|(a, _)| a)
                     .collect();
-                Ok(ties.choose(&mut self.rng).cloned().expect("ties non-empty"))
+                let action = ties.choose(&mut self.rng).cloned().expect("ties non-empty");
+                tracing::trace!(chosen = ?action, "minimax chose");
+                Ok(action)
             }
         }
     }

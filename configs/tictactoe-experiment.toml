@@ -1,0 +1,20 @@
+# Default tic-tac-toe experiment: the default sweep, annotated, summarized and checked for
+# engine agreement. Relative paths resolve against this file's directory; `pipeline --out DIR`
+# overrides `out`.
+schema_version = 1
+name = "tictactoe-default"
+game = "tictactoe"
+out = "../runs/tictactoe-default"
+
+[generate]
+sweep = "tictactoe-default.toml"
+
+[annotate]
+enabled = true
+
+[analyze]
+analyzers = ["summary", "agreement"]
+strict = false
+
+[report]
+out = "report.md"

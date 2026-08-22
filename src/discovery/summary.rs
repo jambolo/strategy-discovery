@@ -4,8 +4,12 @@
 //! [`analyze_corpus`] reads a generated corpus run directory (`run.json`, `games.jsonl`,
 //! `positions.jsonl`) and writes `summary.json`: outcome distributions by pairing, game
 //! length, ply and first-action symmetry orbit, plus diversity metrics that guard against a
-//! corpus of low-variety games. [`verify_corpus`] independently reconstructs every game from
-//! its action list via [`crate::io::replay::replay`] and checks it against the persisted positions.
+//! corpus of low-variety games. [`SummaryAnalyzer`] is the [`crate::discovery::analyze::Analyzer`]
+//! wrapper around [`summarize`] that the analyzer registry runs; [`analyze_corpus`] is now a thin
+//! wrapper over the registry ([`crate::discovery::analyze::analyze_outputs`]) kept for direct
+//! callers that only want `summary.json`. [`verify_corpus`] independently reconstructs every game
+//! from its action list via [`crate::io::replay::replay`] and checks it against the persisted
+//! positions.
 //!
 //! Repeated analysis of the same corpus must produce a byte-identical `summary.json`: every
 //! map in [`CorpusSummary`] is a `BTreeMap` and no field carries timing, threading, or
@@ -15,21 +19,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
-use crate::core::traits::GameDomain;
+use crate::discovery::analyze::{
+    AnalyzeContext, AnalyzeOptions, Analyzer, AnalyzerOutput, GameRec, PosRec, analyze_outputs, builtin_registry, load_corpus,
+};
 use crate::discovery::bundle::GameBundle;
 use crate::discovery::config::CorpusError;
-use crate::io::{
-    CorpusGame, GAMES_FILE, GameRecord, IoError, POSITIONS_FILE, PositionRecord, RUN_FILE, SCHEMA_VERSION, SUMMARY_FILE,
-    check_schema_version, final_state, read_json, read_jsonl, replay, write_json_pretty,
-};
+use crate::io::{CorpusGame, IoError, SCHEMA_VERSION, SUMMARY_FILE, final_state, replay};
 use crate::strategy::engine::EngineGame;
-
-/// A [`GameRecord`] specialized to `G`'s persisted types.
-type GameRec<G> =
-    GameRecord<<G as GameDomain>::State, <G as GameDomain>::Action, <G as GameDomain>::Player, <G as GameDomain>::Outcome>;
-/// A [`PositionRecord`] specialized to `G`'s persisted types.
-type PosRec<G> =
-    PositionRecord<<G as GameDomain>::State, <G as GameDomain>::Action, <G as GameDomain>::Player, <G as GameDomain>::Outcome>;
 
 /// Outcome tally over a set of games.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Default)]
@@ -246,74 +242,213 @@ pub fn summarize<G: EngineGame + CorpusGame>(
     }
 }
 
-/// The fields of `run.json` this stage needs; other fields are ignored.
-#[derive(Deserialize)]
-struct RunHeader {
-    schema_version: u32,
-    game: String,
-    run_id: String,
+/// The `summary` analyzer: wraps [`summarize`] and writes `summary.json`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SummaryAnalyzer;
+
+impl<G: EngineGame + CorpusGame> Analyzer<G> for SummaryAnalyzer {
+    fn name(&self) -> &str {
+        "summary"
+    }
+    fn description(&self) -> &str {
+        "outcome distributions and corpus-diversity metrics (summary.json)"
+    }
+    fn requires_annotations(&self) -> bool {
+        false
+    }
+    fn run(&self, ctx: &AnalyzeContext<'_, G>, options: &AnalyzeOptions) -> Result<AnalyzerOutput, CorpusError> {
+        let mut summary = summarize(ctx.bundle, ctx.games, ctx.positions, &options.thresholds);
+        summary.run_id = Some(ctx.run_id.clone());
+        AnalyzerOutput::new(SUMMARY_FILE, &summary, summary.diversity_pass)
+    }
+    fn render(&self, output: &serde_json::Value) -> Result<String, CorpusError> {
+        let summary: CorpusSummary = serde_json::from_value(output.clone())
+            .map_err(|e| CorpusError::Io(IoError::Invalid(format!("{SUMMARY_FILE}: {e}"))))?;
+        Ok(render_summary(&summary))
+    }
 }
 
-/// A corpus run's header plus its games and positions, loaded and schema-checked.
-struct LoadedCorpus<G: EngineGame + CorpusGame> {
-    header: RunHeader,
-    games: Vec<GameRec<G>>,
-    positions: Vec<PosRec<G>>,
+/// `value` as a decimal string, or `-` when absent.
+fn opt_usize(value: Option<usize>) -> String {
+    value.map_or_else(|| "-".to_string(), |v| v.to_string())
 }
 
-/// Reads and schema-checks `run.json`, `games.jsonl` and `positions.jsonl` from `corpus_dir`,
-/// rejecting a header whose `game` does not match `bundle.name`.
-fn load_corpus<G: EngineGame + CorpusGame>(bundle: &GameBundle<G>, corpus_dir: &Path) -> Result<LoadedCorpus<G>, CorpusError> {
-    let run_path = corpus_dir.join(RUN_FILE);
-    if !run_path.is_file() {
-        return Err(CorpusError::Io(IoError::Missing { path: run_path }));
-    }
-    let header: RunHeader = read_json(&run_path)?;
-    check_schema_version(&run_path, header.schema_version)?;
-    if header.game != bundle.name {
-        return Err(CorpusError::Config(format!(
-            "corpus game `{}` does not match bundle `{}`",
-            header.game, bundle.name
-        )));
+/// `value` formatted `{:.3}`, or `-` when absent.
+fn opt_frac(value: Option<f64>) -> String {
+    value.map_or_else(|| "-".to_string(), |v| format!("{v:.3}"))
+}
+
+/// `"yes"` or `"no"`.
+fn yes_no(pass: bool) -> &'static str {
+    if pass { "yes" } else { "no" }
+}
+
+/// One [`OutcomeCounts`] rendered as `wins | draws | unfinished | total` table-cell text, `wins`
+/// being its `k=v` pairs joined by `, ` (or `-` when empty).
+fn outcome_row(counts: &OutcomeCounts) -> String {
+    let wins = if counts.wins.is_empty() {
+        "-".to_string()
+    } else {
+        counts
+            .wins
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!("{wins} | {} | {} | {}", counts.draws, counts.unfinished, counts.total)
+}
+
+/// Renders `summary` into the deterministic Markdown produced by [`SummaryAnalyzer::render`]:
+/// a `## Summary` overview table followed by `### Diversity`, `### Outcomes`, `### By pairing`,
+/// `### By length`, `### By ply` and `### By first-action orbit` sections, each heading and each
+/// table set off by blank lines, the whole string ending in a single `\n`.
+fn render_summary(summary: &CorpusSummary) -> String {
+    let mut blocks: Vec<String> = Vec::new();
+
+    blocks.push("## Summary".to_string());
+    blocks.push(
+        [
+            "| metric | value |".to_string(),
+            "| --- | --- |".to_string(),
+            format!("| run_id | {} |", summary.run_id.as_deref().unwrap_or("-")),
+            format!("| game | {} |", summary.game),
+            format!("| games | {} |", summary.games),
+            format!("| positions | {} |", summary.positions),
+            format!("| distinct_games | {} |", summary.distinct_games),
+            format!("| distinct_game_fraction | {:.3} |", summary.distinct_game_fraction),
+            format!("| distinct_positions | {} |", summary.distinct_positions),
+            format!("| distinct_canonical_positions | {} |", summary.distinct_canonical_positions),
+            format!(
+                "| known_canonical_positions | {} |",
+                opt_usize(summary.known_canonical_positions)
+            ),
+            format!("| canonical_coverage | {} |", opt_frac(summary.canonical_coverage)),
+            format!("| decisive_games | {} |", summary.decisive_games),
+            format!("| decisive_fraction | {:.3} |", summary.decisive_fraction),
+        ]
+        .join("\n"),
+    );
+
+    blocks.push("### Diversity".to_string());
+    let coverage_row = match summary.canonical_coverage {
+        Some(v) => format!(
+            "| canonical_coverage | {v:.3} | {:.3} | {} |",
+            summary.thresholds.min_canonical_coverage,
+            yes_no(v >= summary.thresholds.min_canonical_coverage)
+        ),
+        None => format!(
+            "| canonical_coverage | - | {:.3} | - |",
+            summary.thresholds.min_canonical_coverage
+        ),
+    };
+    blocks.push(
+        [
+            "| metric | value | threshold | pass |".to_string(),
+            "| --- | --- | --- | --- |".to_string(),
+            coverage_row,
+            format!(
+                "| decisive_fraction | {:.3} | {:.3} | {} |",
+                summary.decisive_fraction,
+                summary.thresholds.min_decisive_fraction,
+                yes_no(summary.decisive_fraction >= summary.thresholds.min_decisive_fraction)
+            ),
+            format!(
+                "| distinct_game_fraction | {:.3} | {:.3} | {} |",
+                summary.distinct_game_fraction,
+                summary.thresholds.min_distinct_game_fraction,
+                yes_no(summary.distinct_game_fraction >= summary.thresholds.min_distinct_game_fraction)
+            ),
+        ]
+        .join("\n"),
+    );
+    blocks.push(format!("Diversity pass: {}", yes_no(summary.diversity_pass)));
+    if !summary.diversity_failures.is_empty() {
+        blocks.push(
+            summary
+                .diversity_failures
+                .iter()
+                .map(|f| format!("- {f}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
     }
 
-    let games_path = corpus_dir.join(GAMES_FILE);
-    if !games_path.is_file() {
-        return Err(CorpusError::Io(IoError::Missing { path: games_path }));
+    blocks.push("### Outcomes".to_string());
+    let mut outcome_rows = vec!["| outcome | games |".to_string(), "| --- | --- |".to_string()];
+    for (winner, n) in &summary.outcomes.wins {
+        outcome_rows.push(format!("| win {winner} | {n} |"));
     }
-    let games: Vec<GameRec<G>> = read_jsonl(&games_path)?;
-    for game in &games {
-        check_schema_version(&games_path, game.schema_version)?;
-    }
+    outcome_rows.push(format!("| draw | {} |", summary.outcomes.draws));
+    outcome_rows.push(format!("| unfinished | {} |", summary.outcomes.unfinished));
+    outcome_rows.push(format!("| total | {} |", summary.outcomes.total));
+    blocks.push(outcome_rows.join("\n"));
 
-    let positions_path = corpus_dir.join(POSITIONS_FILE);
-    if !positions_path.is_file() {
-        return Err(CorpusError::Io(IoError::Missing { path: positions_path }));
+    blocks.push("### By pairing".to_string());
+    let mut pairing_rows = vec![
+        "| pairing | wins | draws | unfinished | total |".to_string(),
+        "| --- | --- | --- | --- | --- |".to_string(),
+    ];
+    for (pairing, counts) in &summary.by_pairing {
+        pairing_rows.push(format!("| {pairing} | {} |", outcome_row(counts)));
     }
-    let positions: Vec<PosRec<G>> = read_jsonl(&positions_path)?;
-    for position in &positions {
-        check_schema_version(&positions_path, position.schema_version)?;
-    }
+    blocks.push(pairing_rows.join("\n"));
 
-    Ok(LoadedCorpus {
-        header,
-        games,
-        positions,
-    })
+    blocks.push("### By length".to_string());
+    let mut length_rows = vec!["| length | games |".to_string(), "| --- | --- |".to_string()];
+    for (length, n) in &summary.by_length {
+        length_rows.push(format!("| {length} | {n} |"));
+    }
+    blocks.push(length_rows.join("\n"));
+
+    blocks.push("### By ply".to_string());
+    let mut ply_rows = vec![
+        "| ply | wins | draws | unfinished | total |".to_string(),
+        "| --- | --- | --- | --- | --- |".to_string(),
+    ];
+    for (ply, counts) in &summary.by_ply {
+        ply_rows.push(format!("| {ply} | {} |", outcome_row(counts)));
+    }
+    blocks.push(ply_rows.join("\n"));
+
+    blocks.push("### By first-action orbit".to_string());
+    let mut orbit_rows = vec![
+        "| orbit | wins | draws | unfinished | total |".to_string(),
+        "| --- | --- | --- | --- | --- |".to_string(),
+    ];
+    for (orbit, counts) in &summary.by_first_action_orbit {
+        orbit_rows.push(format!("| {orbit} | {} |", outcome_row(counts)));
+    }
+    blocks.push(orbit_rows.join("\n"));
+
+    format!("{}\n", blocks.join("\n\n"))
 }
 
 /// Reads a corpus run from `corpus_dir`, summarizes it against `thresholds`, and writes
-/// `summary.json` alongside the run.
+/// `summary.json` (via the `summary` analyzer) and `analyze.json` alongside the run.
 pub fn analyze_corpus<G: EngineGame + CorpusGame>(
     bundle: &GameBundle<G>,
     corpus_dir: &Path,
     thresholds: &DiversityThresholds,
 ) -> Result<CorpusSummary, CorpusError> {
-    let loaded = load_corpus(bundle, corpus_dir)?;
-    let mut summary = summarize(bundle, &loaded.games, &loaded.positions, thresholds);
-    summary.run_id = Some(loaded.header.run_id);
-    write_json_pretty(&corpus_dir.join(SUMMARY_FILE), &summary)?;
-    Ok(summary)
+    let registry = builtin_registry::<G>();
+    let options = AnalyzeOptions {
+        analyzers: vec!["summary".to_string()],
+        thresholds: thresholds.clone(),
+        strict: false,
+    };
+    let (_, outputs) = analyze_outputs(bundle, corpus_dir, &registry, &options)?;
+    let output = outputs
+        .into_iter()
+        .next()
+        .ok_or_else(|| CorpusError::Io(IoError::Invalid("summary analyzer produced no output".to_string())))?;
+    serde_json::from_str(&output.json).map_err(|source| {
+        CorpusError::Io(IoError::Json {
+            path: corpus_dir.join(SUMMARY_FILE),
+            line: 0,
+            source,
+        })
+    })
 }
 
 /// Builds a mismatch error for one ply of one game.
@@ -395,7 +530,8 @@ pub fn verify_corpus<G: EngineGame + CorpusGame>(bundle: &GameBundle<G>, corpus_
 mod tests {
     use super::*;
     use crate::games::tictactoe::{Board, Move, Outcome, Player, TicTacToe, game_bundle};
-    use crate::io::{CellKey, write_jsonl};
+    use crate::io::schema::ANALYZE_FILE;
+    use crate::io::{CellKey, GAMES_FILE, GameRecord, POSITIONS_FILE, PositionRecord, RUN_FILE, write_json_pretty, write_jsonl};
 
     /// Builds a hand-crafted [`GameRecord`]/[`PositionRecord`] pair for `actions`, using
     /// `replay` and `bundle.canonicalize` the same way [`verify_corpus`] checks them.
@@ -610,5 +746,61 @@ mod tests {
         let summary = analyze_corpus(&bundle, &dir, &DiversityThresholds::default()).unwrap();
         assert_eq!(summary.run_id, Some("r".to_string()));
         assert!(dir.join(SUMMARY_FILE).is_file());
+        assert!(dir.join(ANALYZE_FILE).is_file());
+    }
+
+    #[test]
+    fn summary_render_is_markdown_and_deterministic() {
+        let bundle = game_bundle();
+
+        let (win_game, win_positions) = make_game(
+            &bundle,
+            "0:0",
+            ["a", "b"],
+            &[Move(0), Move(3), Move(1), Move(4), Move(2)],
+            Some(Outcome::Win(Player::X)),
+        );
+        let (draw_game, draw_positions) = make_game(
+            &bundle,
+            "0:1",
+            ["a", "b"],
+            &[
+                Move(0),
+                Move(1),
+                Move(2),
+                Move(4),
+                Move(3),
+                Move(5),
+                Move(7),
+                Move(6),
+                Move(8),
+            ],
+            Some(Outcome::Draw),
+        );
+
+        let games = vec![win_game, draw_game];
+        let mut positions = win_positions;
+        positions.extend(draw_positions);
+
+        let summary = summarize(&bundle, &games, &positions, &DiversityThresholds::default());
+        let value = serde_json::to_value(&summary).unwrap();
+
+        let analyzer: &dyn Analyzer<TicTacToe> = &SummaryAnalyzer;
+        let rendered = analyzer.render(&value).unwrap();
+
+        assert!(rendered.starts_with("## Summary\n\n"));
+        assert!(rendered.contains("| --- |"));
+        assert!(rendered.contains("canonical_coverage"));
+        assert!(!rendered.contains("|---|"));
+
+        let lines: Vec<&str> = rendered.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.starts_with('#') {
+                assert_eq!(lines.get(i + 1), Some(&""), "heading {line:?} not followed by a blank line");
+            }
+        }
+
+        let rendered_again = analyzer.render(&value).unwrap();
+        assert_eq!(rendered, rendered_again);
     }
 }

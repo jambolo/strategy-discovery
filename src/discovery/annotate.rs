@@ -139,6 +139,7 @@ pub fn annotate_corpus<G: EngineGame + CorpusGame>(
     corpus_dir: &Path,
     options: &AnnotateOptions,
 ) -> Result<AnnotateMetadata, CorpusError> {
+    let started = std::time::Instant::now();
     let run_path = corpus_dir.join(RUN_FILE);
     if !run_path.exists() {
         return Err(CorpusError::Io(IoError::Missing { path: run_path }));
@@ -188,6 +189,14 @@ pub fn annotate_corpus<G: EngineGame + CorpusGame>(
         solver_states: solver.solved_states(),
     };
     write_json_pretty(&corpus_dir.join(ANNOTATE_FILE), &metadata)?;
+    tracing::info!(
+        mode = "corpus",
+        annotated = metadata.annotated,
+        terminal = metadata.terminal,
+        disagreements = metadata.disagreements,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "annotated"
+    );
     Ok(metadata)
 }
 
@@ -199,6 +208,7 @@ pub fn annotate_exhaustive<G: EngineGame + CorpusGame>(
     out_dir: &Path,
     options: &AnnotateOptions,
 ) -> Result<AnnotateMetadata, CorpusError> {
+    let started = std::time::Instant::now();
     std::fs::create_dir_all(out_dir).map_err(|source| {
         CorpusError::Io(IoError::Io {
             path: out_dir.to_path_buf(),
@@ -227,6 +237,14 @@ pub fn annotate_exhaustive<G: EngineGame + CorpusGame>(
         solver_states: solver.solved_states(),
     };
     write_json_pretty(&out_dir.join(ANNOTATE_FILE), &metadata)?;
+    tracing::info!(
+        mode = "exhaustive",
+        annotated = metadata.annotated,
+        terminal = metadata.terminal,
+        disagreements = metadata.disagreements,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "annotated"
+    );
     Ok(metadata)
 }
 

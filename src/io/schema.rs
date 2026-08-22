@@ -23,6 +23,8 @@ pub const ANNOTATIONS_FILE: &str = "annotations.jsonl";
 pub const ANNOTATE_FILE: &str = "annotate.json";
 /// File name for a run's summary document.
 pub const SUMMARY_FILE: &str = "summary.json";
+/// File name for the analyze stage's manifest document.
+pub const ANALYZE_FILE: &str = "analyze.json";
 
 /// Games whose state/action/player/outcome types can be persisted. Blanket-implemented.
 pub trait CorpusGame:
@@ -270,6 +272,7 @@ mod tests {
         assert_eq!(ANNOTATIONS_FILE, "annotations.jsonl");
         assert_eq!(ANNOTATE_FILE, "annotate.json");
         assert_eq!(SUMMARY_FILE, "summary.json");
+        assert_eq!(ANALYZE_FILE, "analyze.json");
         assert_eq!(SCHEMA_VERSION, 1);
     }
 }

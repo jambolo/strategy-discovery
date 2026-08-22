@@ -156,6 +156,9 @@ pub enum CorpusError {
     /// A sweep configuration is invalid (fails validation, not TOML/JSON parsing).
     #[error("invalid configuration: {0}")]
     Config(String),
+    /// A required input is absent; the message names the missing file and the stage to run first.
+    #[error("precondition failed: {0}")]
+    Precondition(String),
     /// A match failed to play out.
     #[error(transparent)]
     Match(#[from] MatchError),
