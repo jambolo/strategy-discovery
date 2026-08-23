@@ -5,6 +5,7 @@ use crate::core::symmetry::{Permutation, SymmetryGroup};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::sync::Arc;
 use thiserror::Error;
 
 /// Type-level description of one game: a marker type carrying the state/action/player/outcome types.
@@ -65,6 +66,53 @@ pub trait GamePrimitives<G: GameDomain>: Send + Sync {
     /// Image of `state` under `perm`: the occupant of position `p` moves to `perm.apply(p)`;
     /// player-to-move and all other state are unchanged.
     fn transform(&self, state: &G::State, perm: &Permutation) -> G::State;
+}
+
+/// Delegation so shared `Arc<dyn GameRules<G>>` handles satisfy generic bounds.
+impl<G: GameDomain, T: GameRules<G> + ?Sized> GameRules<G> for Arc<T> {
+    fn initial_state(&self) -> G::State {
+        (**self).initial_state()
+    }
+    fn player_to_move(&self, state: &G::State) -> G::Player {
+        (**self).player_to_move(state)
+    }
+    fn legal_actions(&self, state: &G::State) -> Vec<G::Action> {
+        (**self).legal_actions(state)
+    }
+    fn apply(&self, state: &G::State, action: &G::Action) -> Result<G::State, RulesError> {
+        (**self).apply(state, action)
+    }
+    fn outcome(&self, state: &G::State) -> Option<G::Outcome> {
+        (**self).outcome(state)
+    }
+    fn is_terminal(&self, state: &G::State) -> bool {
+        (**self).is_terminal(state)
+    }
+}
+
+/// Delegation so shared `Arc<dyn GamePrimitives<G>>` handles satisfy generic bounds.
+impl<G: GameDomain, T: GamePrimitives<G> + ?Sized> GamePrimitives<G> for Arc<T> {
+    fn position_count(&self) -> usize {
+        (**self).position_count()
+    }
+    fn adjacent(&self, position: usize) -> Vec<usize> {
+        (**self).adjacent(position)
+    }
+    fn lines(&self) -> Vec<Vec<usize>> {
+        (**self).lines()
+    }
+    fn symmetry_group(&self) -> SymmetryGroup {
+        (**self).symmetry_group()
+    }
+    fn occupant(&self, state: &G::State, position: usize) -> Option<G::Player> {
+        (**self).occupant(state, position)
+    }
+    fn action_position(&self, action: &G::Action) -> Option<usize> {
+        (**self).action_position(action)
+    }
+    fn transform(&self, state: &G::State, perm: &Permutation) -> G::State {
+        (**self).transform(state, perm)
+    }
 }
 
 /// State → named feature values over the tiered vocabulary.

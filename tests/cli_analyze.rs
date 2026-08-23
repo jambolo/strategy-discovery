@@ -30,11 +30,29 @@ fn lists_registered_analyzers() {
     assert_eq!(code, 0);
 
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-    assert!(!lines.is_empty(), "stdout: {stdout}");
+    assert_eq!(lines.len(), 4, "stdout: {stdout}");
     for line in &lines {
         assert!(line.contains('\t'), "line missing tab: {line}");
     }
-    assert!(lines.iter().any(|l| l.starts_with("summary\t")), "stdout: {stdout}");
+    for name in ["agreement", "dataset", "mine", "summary"] {
+        let matches: Vec<&&str> = lines.iter().filter(|l| l.starts_with(&format!("{name}\t"))).collect();
+        assert_eq!(matches.len(), 1, "expected exactly one `{name}` line, stdout: {stdout}");
+    }
+}
+
+#[test]
+fn mine_flags_are_validated() {
+    let (code, _stdout, stderr) = cli(&["analyze", "--mine-engine", "x"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("engine `x`"), "stderr: {stderr}");
+
+    let (code, _stdout, stderr) = cli(&["analyze", "--mine-depths", "4,x"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("is not a depth"), "stderr: {stderr}");
+
+    let (code, _stdout, stderr) = cli(&["analyze", "--mine-holdout", "1.0"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("holdout_fraction"), "stderr: {stderr}");
 }
 
 #[test]
@@ -64,4 +82,90 @@ fn analyze_without_corpus_is_rejected() {
     let (code, _stdout, stderr) = cli(&["analyze"]);
     assert_eq!(code, 2);
     assert!(stderr.contains("--corpus"), "stderr: {stderr}");
+}
+
+#[test]
+fn dataset_and_mine_end_to_end_byte_identical() {
+    use strategy_discovery::io::MiningReport;
+
+    let dir = out_dir("cli_analyze_dataset_and_mine_end_to_end");
+    let dir_str = dir.to_str().expect("temp path is utf-8");
+
+    let (code, _stdout, _stderr) = cli(&["generate", "--config", "tests/fixtures/generate-small.toml", "--out", dir_str]);
+    assert_eq!(code, 0);
+
+    let (code, _stdout, _stderr) = cli(&["annotate", "--corpus", dir_str]);
+    assert_eq!(code, 0);
+
+    let (code, _stdout, _stderr) = cli(&[
+        "analyze",
+        "--corpus",
+        dir_str,
+        "--analyzers",
+        "summary,agreement,dataset,mine",
+        "--mine-depths",
+        "4,6",
+    ]);
+    assert_eq!(code, 0);
+
+    for name in ["dataset.jsonl", "dataset.json", "heuristics.json", "analyze.json"] {
+        assert!(dir.join(name).is_file(), "missing {name}");
+    }
+    let analyze_json = std::fs::read_to_string(dir.join("analyze.json")).unwrap();
+    for name in [
+        "\"name\": \"summary\"",
+        "\"name\": \"agreement\"",
+        "\"name\": \"dataset\"",
+        "\"name\": \"mine\"",
+    ] {
+        assert!(analyze_json.contains(name), "analyze.json: {analyze_json}");
+    }
+
+    let heuristics_bytes = std::fs::read(dir.join("heuristics.json")).unwrap();
+    let report: MiningReport = serde_json::from_slice(&heuristics_bytes).expect("heuristics.json parses");
+    assert_eq!(report.candidates.len(), 2, "candidates: {:?}", report.candidates);
+    assert_eq!(report.candidates[0].name, "mined-d4-l1");
+    assert_eq!(report.candidates[1].name, "mined-d6-l1");
+    for candidate in &report.candidates {
+        candidate.heuristic.validate().unwrap();
+        assert!(
+            candidate.rules >= 1,
+            "candidate {}: rules={}",
+            candidate.name,
+            candidate.rules
+        );
+    }
+    assert_eq!(report.params.depths, vec![4, 6]);
+    assert!(report.dataset.rows > 0);
+
+    let before: Vec<(&str, Vec<u8>)> = [
+        "summary.json",
+        "agreement.json",
+        "dataset.jsonl",
+        "dataset.json",
+        "heuristics.json",
+        "analyze.json",
+    ]
+    .into_iter()
+    .map(|name| (name, std::fs::read(dir.join(name)).unwrap()))
+    .collect();
+
+    let (code, _stdout, _stderr) = cli(&[
+        "analyze",
+        "--corpus",
+        dir_str,
+        "--analyzers",
+        "summary,agreement,dataset,mine",
+        "--mine-depths",
+        "4,6",
+    ]);
+    assert_eq!(code, 0);
+
+    for (name, bytes_before) in &before {
+        let bytes_after = std::fs::read(dir.join(name)).unwrap();
+        assert_eq!(
+            bytes_after, *bytes_before,
+            "{name} not byte-identical across repeated analyze runs"
+        );
+    }
 }

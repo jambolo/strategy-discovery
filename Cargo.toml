@@ -7,6 +7,9 @@ edition = "2024"
 anyhow = "1.0.104"
 clap = { version = "4.6.6", features = ["derive"] }
 game-player = { git = "https://github.com/jambolo/game-player.git", branch = "master" }
+linfa = "0.8.1"
+linfa-trees = "0.8.1"
+ndarray = "0.16.1"
 rand = "0.10.2"
 rand_chacha = "0.10.0"
 rayon = "1.12.0"

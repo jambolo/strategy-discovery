@@ -3,6 +3,7 @@
 //! shared across one game's rules and evaluator.
 
 use crate::core::dsl::HeuristicStrategy;
+use crate::core::featurizer::Featurizer;
 use crate::core::interpreter::RuleInterpreterProvider;
 use crate::core::kinds;
 use crate::core::traits::{GameDomain, GameRules, StateEvaluator, StrategyError, StrategyProvider};
@@ -54,6 +55,9 @@ pub struct EngineBundle<G: GameDomain> {
     pub rules: Arc<dyn GameRules<G>>,
     /// Static state evaluator.
     pub evaluator: Arc<dyn StateEvaluator<G>>,
+    /// Feature context for strategies that evaluate feature expressions (`heuristic-rules`);
+    /// `None` for games that declare no primitives.
+    pub featurizer: Option<Arc<Featurizer<G>>>,
 }
 
 impl<G: GameDomain> Clone for EngineBundle<G> {
@@ -61,6 +65,7 @@ impl<G: GameDomain> Clone for EngineBundle<G> {
         Self {
             rules: Arc::clone(&self.rules),
             evaluator: Arc::clone(&self.evaluator),
+            featurizer: self.featurizer.clone(),
         }
     }
 }
@@ -152,11 +157,17 @@ fn build_random<G: EngineGame>(
 /// spec is reported via [`wrong_kind`].
 fn build_heuristic_rules<G: EngineGame>(
     spec: &StrategySpec,
-    _bundle: &EngineBundle<G>,
+    bundle: &EngineBundle<G>,
 ) -> Result<Box<dyn StrategyProvider<G>>, StrategyError> {
     match spec {
         StrategySpec::HeuristicRules { heuristic } => {
-            let provider = RuleInterpreterProvider::<G>::new(heuristic.clone()).map_err(|e| StrategyError::Other(e.to_string()))?;
+            let featurizer = bundle.featurizer.clone().ok_or_else(|| {
+                StrategyError::Other(
+                    "strategy `heuristic-rules` requires a feature context (game primitives); this game provides none".to_string(),
+                )
+            })?;
+            let provider = RuleInterpreterProvider::<G>::new(heuristic.clone(), featurizer)
+                .map_err(|e| StrategyError::Other(e.to_string()))?;
             Ok(Box::new(provider))
         }
         other => Err(wrong_kind(kinds::HEURISTIC_RULES, other)),
@@ -208,6 +219,7 @@ mod tests {
         EngineBundle {
             rules: Arc::new(TicTacToeRules),
             evaluator: Arc::new(TicTacToeEvaluator),
+            featurizer: None,
         }
     }
 
@@ -335,19 +347,30 @@ mod tests {
     }
 
     #[test]
-    fn build_heuristic_rules_is_unimplemented_on_choose() {
-        let registry = StrategyRegistry::new(bundle());
+    fn build_heuristic_rules_plays_with_featurizer() {
+        let registry = StrategyRegistry::new(crate::games::tictactoe::engine_bundle());
         let spec = StrategySpec::HeuristicRules {
             heuristic: HeuristicStrategy::new("h"),
         };
         let provider = registry.build(&spec).unwrap();
-        assert_eq!(provider.kind(), "heuristic-rules");
+        assert_eq!(provider.kind(), kinds::HEURISTIC_RULES);
 
         let board = Board::empty();
         let legal = TicTacToeRules.legal_actions(&board);
-        match provider.create(0).choose(&board, &legal).unwrap_err() {
-            StrategyError::Unimplemented { kind, .. } => assert_eq!(kind, "heuristic-rules"),
-            other => panic!("expected Unimplemented, got {other:?}"),
+        let chosen = provider.create(7).choose(&board, &legal).unwrap();
+        assert!(legal.contains(&chosen));
+    }
+
+    #[test]
+    fn heuristic_rules_without_featurizer_is_an_error() {
+        let registry = StrategyRegistry::new(bundle());
+        let spec = StrategySpec::HeuristicRules {
+            heuristic: HeuristicStrategy::new("h"),
+        };
+        match registry.build(&spec) {
+            Err(StrategyError::Other(msg)) => assert!(msg.contains("requires a feature context"), "message: {msg}"),
+            Err(other) => panic!("expected Other, got {other:?}"),
+            Ok(_) => panic!("expected Other, got Ok"),
         }
     }
 

@@ -414,6 +414,7 @@ mod tests {
             corpus_run_id: None,
             annotations_run_id: None,
             annotations_mode: None,
+            discovery: None,
         }
     }
 

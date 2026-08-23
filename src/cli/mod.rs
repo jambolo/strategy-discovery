@@ -1,15 +1,16 @@
 //! Command-line entry points — one subcommand per pipeline stage.
 //!
 //! Each subcommand lives in its own file (`play`, `generate`, `annotate`, `analyze`, `evaluate`,
-//! `report`, `pipeline`); [`games`] is the only non-test place in the crate allowed to name a concrete
+//! `report`, `pipeline`, `discover`); [`games`] is the only non-test place in the crate allowed to name a concrete
 //! game. The global `-v`/`--verbose` and `-q`/`--quiet` flags (see [`logging`]) control stderr
 //! log verbosity for every subcommand.
 //!
 //! Process exit code: 0 success, 1 runtime failure, 2 invalid invocation or input, 3 a requested
-//! check failed (`analyze --strict`, `evaluate --strict`); see [`error`] for the classification.
+//! check failed (`analyze --strict`, `evaluate --strict`, `discover` under `[discover] strict = true`); see [`error`] for the classification.
 
 mod analyze;
 mod annotate;
+mod discover;
 pub mod error;
 mod evaluate;
 pub mod games;
@@ -103,6 +104,21 @@ pub enum Command {
         /// Exit with status 3 when the corpus fails its diversity thresholds.
         #[arg(long)]
         strict: bool,
+        /// Induction engine for the `dataset`/`mine` analyzers; defaults to `MineParams::default`.
+        #[arg(long)]
+        mine_engine: Option<String>,
+        /// Comma-separated candidate depths for the `mine` analyzer; defaults to `MineParams::default`.
+        #[arg(long)]
+        mine_depths: Option<String>,
+        /// Minimum rows per leaf for the `mine` analyzer; defaults to `MineParams::default`.
+        #[arg(long)]
+        mine_min_leaf: Option<usize>,
+        /// Seed of the train/holdout shuffle for the `mine` analyzer; defaults to `MineParams::default`.
+        #[arg(long)]
+        mine_seed: Option<u64>,
+        /// Fraction of rows held out for evaluation by the `mine` analyzer; defaults to `MineParams::default`.
+        #[arg(long)]
+        mine_holdout: Option<f64>,
     },
     /// Evaluate strategies against the game's benchmark roster and archive the results.
     Evaluate(evaluate::EvaluateArgs),
@@ -110,6 +126,8 @@ pub enum Command {
     Report(report::ReportArgs),
     /// Run a configured experiment end to end.
     Pipeline(pipeline::PipelineArgs),
+    /// Run a configured experiment end to end, then evaluate and archive the mined heuristics.
+    Discover(discover::DiscoverArgs),
 }
 
 /// Runs the CLI over the process arguments.
@@ -153,6 +171,11 @@ where
             min_decisive,
             min_distinct,
             strict,
+            mine_engine,
+            mine_depths,
+            mine_min_leaf,
+            mine_seed,
+            mine_holdout,
         }) => analyze::run(
             corpus,
             game,
@@ -162,9 +185,15 @@ where
             min_decisive,
             min_distinct,
             strict,
+            mine_engine,
+            mine_depths,
+            mine_min_leaf,
+            mine_seed,
+            mine_holdout,
         ),
         Some(Command::Evaluate(args)) => evaluate::run(args),
         Some(Command::Report(args)) => report::run(args),
         Some(Command::Pipeline(args)) => pipeline::run(args),
+        Some(Command::Discover(args)) => discover::run(args),
     }
 }

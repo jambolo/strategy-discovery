@@ -9,12 +9,19 @@
 //! `crate::cli::report::render_run_dir`) instead of echoing it. Before a stage runs, its
 //! required input files are checked and a missing one is reported as `CorpusError::Precondition`
 //! naming both the missing file and the stage that produces it. `annotate` is skipped entirely
-//! (and left out of the final `stages=` line) when the experiment disables annotation.
+//! (and left out of the final `stages=` line) when the experiment disables annotation. When
+//! `[annotate] mode = "exhaustive"`, the annotate stage annotates every reachable position of
+//! the game instead of the generated corpus, and has no `generate`-produced preconditions. The
+//! stage-running body lives in `run_stages`, shared with the `discover` subcommand, which
+//! runs the same four stages before continuing with evaluation.
 
 use std::path::{Path, PathBuf};
 
 use crate::cli::games::{dispatch_game, game_of_toml_file};
-use crate::discovery::{CorpusError, GameBundle, annotate_corpus, builtin_registry, generate, load_experiment, resolve_experiment};
+use crate::discovery::{
+    AnalyzerRegistry, AnnotateMode, CorpusError, GameBundle, ResolvedExperiment, annotate_corpus, annotate_exhaustive,
+    builtin_registry, generate, load_experiment, mode_name, resolve_experiment,
+};
 use crate::io::schema::ANALYZE_FILE;
 use crate::io::{ANNOTATIONS_FILE, CorpusGame, IoError, POSITIONS_FILE, RUN_FILE};
 use crate::strategy::engine::EngineGame;
@@ -75,6 +82,26 @@ fn run_for<G: EngineGame + CorpusGame>(bundle: &GameBundle<G>, args: &PipelineAr
     let registry = builtin_registry::<G>();
     let resolved = resolve_experiment(config, base_dir, bundle, &registry, args.out.as_deref())?;
 
+    let ran = run_stages(bundle, &resolved, &registry, stages)?;
+
+    println!(
+        "pipeline={} out={} stages={}",
+        resolved.name,
+        resolved.out.display(),
+        ran.join(",")
+    );
+    Ok(())
+}
+
+/// Runs the selected `stages` of an already-resolved experiment, over one concrete game, without
+/// printing the final `pipeline=` trailer line. Shared by the `pipeline` and `discover`
+/// subcommands so both run the four stages with byte-identical stdout.
+pub(crate) fn run_stages<G: EngineGame + CorpusGame>(
+    bundle: &GameBundle<G>,
+    resolved: &ResolvedExperiment<G::Action>,
+    registry: &AnalyzerRegistry<G>,
+    stages: &[&str],
+) -> anyhow::Result<Vec<&'static str>> {
     let mut ran: Vec<&str> = Vec::with_capacity(stages.len());
 
     if stages.contains(&"generate") {
@@ -93,12 +120,20 @@ fn run_for<G: EngineGame + CorpusGame>(bundle: &GameBundle<G>, args: &PipelineAr
     if stages.contains(&"annotate")
         && let Some(options) = &resolved.annotate
     {
-        require_file(&resolved.out.join(RUN_FILE), "generate")?;
-        require_file(&resolved.out.join(POSITIONS_FILE), "generate")?;
-        let metadata = annotate_corpus(bundle, &resolved.out, options)?;
+        let metadata = match resolved.annotate_mode {
+            AnnotateMode::Corpus => {
+                require_file(&resolved.out.join(RUN_FILE), "generate")?;
+                require_file(&resolved.out.join(POSITIONS_FILE), "generate")?;
+                annotate_corpus(bundle, &resolved.out, options)?
+            }
+            AnnotateMode::Exhaustive => annotate_exhaustive(bundle, &resolved.out, options)?,
+        };
         println!(
-            "mode=corpus annotated={} terminal={} disagreements={}",
-            metadata.annotated, metadata.terminal, metadata.disagreements
+            "mode={} annotated={} terminal={} disagreements={}",
+            mode_name(metadata.mode),
+            metadata.annotated,
+            metadata.terminal,
+            metadata.disagreements
         );
         ran.push("annotate");
     }
@@ -120,7 +155,7 @@ fn run_for<G: EngineGame + CorpusGame>(bundle: &GameBundle<G>, args: &PipelineAr
 
     if stages.contains(&"report") {
         require_file(&resolved.out.join(ANALYZE_FILE), "analyze")?;
-        let markdown = crate::cli::report::render_run_dir(bundle, &resolved.out, &registry)?;
+        let markdown = crate::cli::report::render_run_dir(bundle, &resolved.out, registry)?;
         if let Some(parent) = resolved.report_out.parent() {
             std::fs::create_dir_all(parent).map_err(|source| IoError::Io {
                 path: parent.to_path_buf(),
@@ -135,13 +170,7 @@ fn run_for<G: EngineGame + CorpusGame>(bundle: &GameBundle<G>, args: &PipelineAr
         ran.push("report");
     }
 
-    println!(
-        "pipeline={} out={} stages={}",
-        resolved.name,
-        resolved.out.display(),
-        ran.join(",")
-    );
-    Ok(())
+    Ok(ran)
 }
 
 /// Fails with `CorpusError::Precondition` naming `path` and the stage (`produced_by`) that

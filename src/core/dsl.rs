@@ -105,6 +105,9 @@ pub enum DslError {
     /// A rule or the fallback references a feature name absent from `definitions`.
     #[error("undefined features: {0:?}")]
     UndefinedFeatures(Vec<String>),
+    /// A native definition names a feature the game's featurizer does not produce.
+    #[error("native features not produced by this game: {0:?}")]
+    UnavailableFeatures(Vec<String>),
     /// The feature vocabulary itself failed validation.
     #[error(transparent)]
     Feature(#[from] FeatureError),

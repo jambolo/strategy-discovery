@@ -52,6 +52,7 @@ play                                        one-off matches between named strate
 generate -> annotate -> analyze -> report   the corpus pipeline, one command per stage
 pipeline                                    all four stages from one experiment config
 evaluate                                    score strategies against the benchmark roster and archive them
+discover                                    the corpus pipeline plus mining, benchmark evaluation and archiving
 ```
 
 Each command prints its result — and nothing else — to stdout; logs and `error:` lines go
@@ -165,6 +166,8 @@ cargo run -- analyze --list-analyzers
 
 ```text
 agreement	engine-agreement rates of played actions, by strategy and ply (agreement.json)
+dataset	canonicalized per-position feature dataset for rule mining
+mine	induces ordered heuristic rule lists from the feature dataset
 summary	outcome distributions and corpus-diversity metrics (summary.json)
 ```
 
@@ -175,6 +178,13 @@ Flags:
 - `--list-analyzers` prints one `name<TAB>description` line per registered analyzer and exits 0
 - `--min-coverage`, `--min-decisive`, `--min-distinct` override the default diversity thresholds (0.5 / 0.2 / 0.5)
 - `--strict` exits 3 when the corpus fails its diversity thresholds, listing the failures on stderr
+- `--mine-engine NAME`, `--mine-depths LIST` (comma-separated depths, `0` = unlimited), `--mine-min-leaf N`, `--mine-seed S`, `--mine-holdout F` tune the `mine` analyzer; default `MineParams::default()`; an invalid value is a usage error (exit 2)
+
+The `dataset` analyzer writes `dataset.jsonl` (one row per canonical, non-terminal
+position) and `dataset.json` (the dataset manifest); the `mine` analyzer writes
+`heuristics.json` (one candidate decision list per depth). The standalone `analyze`
+command takes mining parameters only from the `--mine-*` flags above, never from a run
+directory.
 
 The stdout line above is printed whenever the `summary` analyzer ran; when it did not, the
 command prints `analyzers=<list> checks_pass=<bool> out=<dir>` instead.
@@ -280,17 +290,55 @@ With `--strict`, if any strategy's loss rate against the reference exceeds
 error: check failed: reference loss rate exceeded: {name} {rate} > {max}
 ```
 
-A `heuristic-rules` strategy entry is a usage error (exit 2, `strategy `heuristic-rules`
-is not implemented: ...`) — its rule interpreter lands with heuristic mining — and is
-never counted as a loss.
+`heuristic-rules` strategies now play through the rule interpreter — conditions and
+selectors evaluate in the canonical frame and map back through the symmetry inverse; see
+[docs/adr/0016-rule-interpreter.md](docs/adr/0016-rule-interpreter.md).
 
 Harness contract: [docs/adr/0011-strategy-evaluation-harness.md](docs/adr/0011-strategy-evaluation-harness.md). Archive and novelty: [docs/adr/0012-strategy-archive-and-novelty.md](docs/adr/0012-strategy-archive-and-novelty.md). Adding a game: [docs/adding-a-game.md](docs/adding-a-game.md).
+
+### discover
+
+Chains `generate -> annotate -> analyze -> report` and then benchmark-evaluates every
+mined heuristic candidate, in one command from one experiment config. The `[discover]`
+config section forces `dataset` and `mine` into the `analyze` stage's analyzer list
+(alongside whatever else is configured), then evaluates each mined decision-list
+candidate against the benchmark roster named by `games`, `seed`, `roster`, `reference`,
+`archive`, `evaluator`, `max_plies`, `strict`, `max_loss_rate`, `threads` and `serial`.
+Each candidate is appended to the strategy archive with discovery provenance (config,
+run, mining depth), and the run writes `evaluation.json` and `discover.json`. For the
+same inputs and archive state, every file this command writes is byte-identical across
+runs, and re-running against the same archive appends nothing. With `[discover] strict =
+true`, the reference loss-rate check runs last, after every file above has been written,
+exiting 3 on failure; a bad config or missing pipeline input is exit 2; a runtime failure
+is exit 1; otherwise exit 0.
+
+```sh
+cargo run -- discover --config configs/tictactoe-discover.toml --out target/m2/p3-discover
+```
+
+```text
+run_id=bd760ff0ace48705 cells=48 games=1920 positions=14887 out=target/m2/p3-discover
+mode=corpus annotated=2291 terminal=0 disagreements=0
+games=1920 distinct_games=1457 canonical_coverage=0.902 decisive_fraction=0.526 diversity_pass=true
+report=target/m2/p3-discover\report.md bytes=48001
+strategy=mined-d6-l1 kind=heuristic-rules games=280 wins=83 draws=195 losses=2 unfinished=0 loss_rate_vs_reference=0.050 agreement=0.970 novelty=1.000
+strategy=mined-d8-l1 kind=heuristic-rules games=280 wins=74 draws=187 losses=19 unfinished=0 loss_rate_vs_reference=0.000 agreement=0.979 novelty=0.039
+strategy=mined-d12-l1 kind=heuristic-rules games=280 wins=87 draws=193 losses=0 unfinished=0 loss_rate_vs_reference=0.000 agreement=0.990 novelty=0.031
+strategy=mined-d0-l1 kind=heuristic-rules games=280 wins=87 draws=193 losses=0 unfinished=0 loss_rate_vs_reference=0.000 agreement=0.990 novelty=0.004
+evaluation=78bcde7c9113b250 game=tictactoe roster=ttt-benchmark-v1 reference=perfect strategies=4 archive_entries=4 out=target/m2/p3-discover
+discover=tictactoe-discover run_id=bd760ff0ace48705 heuristics=4 archive_entries=4 out=target/m2/p3-discover
+```
+
+Flags: `--config <TOML>`, required; `--out <DIR>` overrides the experiment's own `out`.
+
+Mining and interpreter design: [docs/adr/0014-feature-dataset.md](docs/adr/0014-feature-dataset.md), [docs/adr/0015-heuristic-miner.md](docs/adr/0015-heuristic-miner.md), [docs/adr/0016-rule-interpreter.md](docs/adr/0016-rule-interpreter.md).
 
 ### Experiment config
 
 Every relative path in an experiment file resolves against that file's own directory, never
 the process's working directory; `--out` overrides `out` entirely. Complete worked examples
-are `configs/tictactoe-experiment.toml` and `tests/fixtures/experiment-small.toml`.
+are `configs/tictactoe-experiment.toml`, `tests/fixtures/experiment-small.toml` and
+`configs/tictactoe-discover.toml`.
 
 ```toml
 schema_version = 1
@@ -306,6 +354,7 @@ serial = false                  # optional, default false
 [annotate]
 enabled = true                  # default true
 engine_depth = 9                # optional
+mode = "corpus"                 # default "corpus"; or "exhaustive" (annotate every reachable position, small games only)
 
 [analyze]
 analyzers = ["summary", "agreement"]   # default ["summary"]
@@ -318,6 +367,26 @@ min_distinct_game_fraction = 0.5
 
 [report]
 out = "report.md"               # relative to `out`; default "report.md"
+
+[mine]                          # optional; parameters for the `mine` analyzer
+engine = "cart"                 # default "cart"; or "linfa-trees"
+depths = [8]                    # default [8]; one candidate per entry, 0 = unlimited
+min_leaf = 1                    # default 1
+seed = 0                        # default 0
+holdout_fraction = 0.0          # default 0.0
+
+[discover]                      # optional; parameters for the `discover` benchmark evaluation
+games = 20                      # default 20, games per pairing
+seed = 0                        # default 0
+roster = "roster-tiny.toml"     # path, relative to this file; default the game's built-in roster
+reference = "perfect"           # default the roster's last entry
+archive = "archive"             # default "<out>/archive"
+evaluator = "default"           # default the game bundle's default evaluator
+max_plies = 30                  # optional ply cap; omit for unlimited
+strict = false                  # default false
+max_loss_rate = 0.0             # default 0.0
+threads = 4                     # optional
+serial = false                  # default false
 ```
 
 ### Logging and verbosity
@@ -337,8 +406,8 @@ Both flags are global: they may be given before or after the subcommand.
 | --- | --- | --- |
 | 0 | success | the stage completed; for `analyze --strict` and `pipeline`, all checks passed |
 | 1 | failure | runtime error: I/O write failure, engine or strategy failure at play time, solver limit, internal invariant |
-| 2 | usage | invalid invocation or input: bad flags, a missing or malformed config, an unknown game, strategy, evaluator or analyzer, a missing pipeline input, a `heuristic-rules` strategy (its interpreter is not implemented yet) |
-| 3 | check | a requested check failed: `analyze --strict`, or `pipeline` with `strict = true`, on a corpus that misses its diversity thresholds, or `evaluate --strict` on a strategy whose loss rate against the reference exceeds `--max-loss-rate` |
+| 2 | usage | invalid invocation or input: bad flags, a missing or malformed config, an unknown game, strategy, evaluator or analyzer, a missing pipeline input |
+| 3 | check | a requested check failed: `analyze --strict`, or `pipeline` with `strict = true`, on a corpus that misses its diversity thresholds, or `evaluate --strict` on a strategy whose loss rate against the reference exceeds `--max-loss-rate`, or `discover` with `[discover] strict = true` on a mined candidate whose loss rate against the reference exceeds `max_loss_rate` |
 
 Every usage error names the offending flag or field, its value, and the accepted values or
 the fix:
@@ -362,9 +431,13 @@ error: check failed: diversity thresholds not met: canonical_coverage 0.01 < 0.5
 | `agreement.json` | analyze, `agreement` analyzer | engine-agreement rates of the actions actually played, overall and by strategy and by ply |
 | `analyze.json` | analyze | the analyzer manifest: which analyzers ran, in order, and the file each wrote; the thresholds used; `checks_pass` |
 | `report.md` | report `--out`, pipeline | the rendered Markdown report |
-| `evaluation.json` | evaluate | the evaluation report: roster, config, and per-strategy tournament tallies, headline metrics, agreement and behavior signature |
-| `archive/archive.json` | evaluate | strategy archive index: one `{entry_id, name, kind, sequence}` per archived strategy |
-| `archive/entries.jsonl` | evaluate | one archive entry per line: spec, provenance, the full evaluation, novelty |
+| `dataset.jsonl` | analyze, `dataset` analyzer | one `DatasetRow` per non-terminal canonical state: encoded feature values, legal/optimal positions, qualifying classes, label |
+| `dataset.json` | analyze, `dataset` analyzer | dataset manifest: columns (name/tier/kind), action classes, row, label and value counts |
+| `heuristics.json` | analyze, `mine` analyzer | mining report: parameters, dataset manifest, one validated decision-list candidate per depth with per-rule evidence |
+| `discover.json` | discover | discover manifest: run/config/evaluation ids, archive location, per-candidate archive entry ids and headline metrics |
+| `evaluation.json` | evaluate, discover | the evaluation report: roster, config, and per-strategy tournament tallies, headline metrics, agreement and behavior signature |
+| `archive/archive.json` | evaluate, discover | strategy archive index: one `{entry_id, name, kind, sequence}` per archived strategy |
+| `archive/entries.jsonl` | evaluate, discover | one archive entry per line: spec, provenance, the full evaluation, novelty |
 
 Record schema and run-directory layout: [docs/adr/0009-corpus-record-schema.md](docs/adr/0009-corpus-record-schema.md).
 CLI contract, analyzer registry, experiment schema and exit codes: [docs/adr/0010-cli-contract-and-analyzer-registry.md](docs/adr/0010-cli-contract-and-analyzer-registry.md).

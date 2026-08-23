@@ -89,6 +89,60 @@ fn report_renders_a_run_directory() {
 }
 
 #[test]
+fn report_renders_dataset_and_mine_sections() {
+    let dir = out_dir("report_renders_dataset_and_mine_sections");
+    let dir_str = dir.to_str().expect("temp path is utf-8");
+
+    let (code, _stdout, _stderr) = cli(&["generate", "--config", "tests/fixtures/generate-small.toml", "--out", dir_str]);
+    assert_eq!(code, 0);
+
+    let (code, _stdout, _stderr) = cli(&["annotate", "--corpus", dir_str]);
+    assert_eq!(code, 0);
+
+    let (code, _stdout, _stderr) = cli(&[
+        "analyze",
+        "--corpus",
+        dir_str,
+        "--analyzers",
+        "summary,agreement,dataset,mine",
+        "--mine-depths",
+        "4",
+    ]);
+    assert_eq!(code, 0);
+
+    let (code, stdout, _stderr) = cli(&["report", "--input", dir_str]);
+    assert_eq!(code, 0, "stdout: {stdout}");
+
+    let mut cursor = 0usize;
+    for needle in [
+        "## Dataset",
+        "### Labels",
+        "## Mine",
+        "### mined-d4-l1",
+        "#### Rules",
+        "#### Feature definitions",
+    ] {
+        let pos = stdout[cursor..]
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} not found after offset {cursor} in:\n{stdout}"));
+        cursor += pos + needle.len();
+    }
+
+    assert!(
+        stdout.lines().any(|l| l.starts_with("1. if ")
+            && l.contains(" then play a position in ")
+            && l.contains(" — support ")
+            && l.contains(" outcomes W/D/L ")),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.lines().any(|l| l.starts_with("otherwise: ")), "stdout: {stdout}");
+    assert!(stdout.lines().any(|l| l.starts_with("- `")), "stdout: {stdout}");
+
+    headings_have_blank_line_after(&stdout);
+    assert!(!stdout.contains("|---"), "stdout: {stdout}");
+}
+
+#[test]
 fn report_missing_input_is_rejected() {
     let dir = out_dir("report_missing_input_is_rejected");
     let missing = dir.join("does-not-exist");

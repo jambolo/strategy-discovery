@@ -187,6 +187,7 @@ mod tests {
     use crate::discovery::config::GenerateConfig;
     use crate::discovery::corpus::{GenerateOptions, generate};
     use crate::games::tictactoe::{Move, TicTacToe, game_bundle};
+    use crate::io::MineParams;
     use std::path::PathBuf;
 
     const CONFIG: &str = r#"
@@ -227,6 +228,7 @@ depth = 9
         let registry = builtin_registry::<TicTacToe>();
         let options = AnalyzeOptions {
             analyzers: vec!["agreement".to_string()],
+            mine: MineParams::default(),
             ..AnalyzeOptions::default()
         };
 
@@ -258,6 +260,7 @@ depth = 9
         let registry = builtin_registry::<TicTacToe>();
         let options = AnalyzeOptions {
             analyzers: vec!["agreement".to_string()],
+            mine: MineParams::default(),
             ..AnalyzeOptions::default()
         };
 
@@ -274,6 +277,7 @@ depth = 9
         let registry = builtin_registry::<TicTacToe>();
         let options = AnalyzeOptions {
             analyzers: vec!["agreement".to_string()],
+            mine: MineParams::default(),
             ..AnalyzeOptions::default()
         };
 

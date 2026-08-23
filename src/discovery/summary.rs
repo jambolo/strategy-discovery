@@ -24,7 +24,7 @@ use crate::discovery::analyze::{
 };
 use crate::discovery::bundle::GameBundle;
 use crate::discovery::config::CorpusError;
-use crate::io::{CorpusGame, IoError, SCHEMA_VERSION, SUMMARY_FILE, final_state, replay};
+use crate::io::{CorpusGame, IoError, MineParams, SCHEMA_VERSION, SUMMARY_FILE, final_state, replay};
 use crate::strategy::engine::EngineGame;
 
 /// Outcome tally over a set of games.
@@ -436,6 +436,7 @@ pub fn analyze_corpus<G: EngineGame + CorpusGame>(
         analyzers: vec!["summary".to_string()],
         thresholds: thresholds.clone(),
         strict: false,
+        mine: MineParams::default(),
     };
     let (_, outputs) = analyze_outputs(bundle, corpus_dir, &registry, &options)?;
     let output = outputs

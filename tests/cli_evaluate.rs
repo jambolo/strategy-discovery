@@ -234,7 +234,7 @@ fn strict_exits_three_after_writing() {
 }
 
 #[test]
-fn heuristic_rules_is_an_error_not_a_loss() {
+fn heuristic_rules_builds_and_plays() {
     let out = out_dir("heuristic");
     let (code, stdout, stderr) = cli(&[
         "evaluate",
@@ -249,11 +249,19 @@ fn heuristic_rules_is_an_error_not_a_loss() {
         "--out",
         out.to_str().unwrap(),
     ]);
-    assert_eq!(code, 2, "stderr: {stderr}");
-    assert!(stderr.contains("heuristic-rules"), "stderr: {stderr}");
-    assert!(stderr.contains("not implemented"), "stderr: {stderr}");
-    assert!(stdout.is_empty(), "stdout: {stdout}");
-    assert!(!out.join("evaluation.json").exists());
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("strategies=1"), "stdout: {stdout}");
+
+    let line = stdout
+        .lines()
+        .find(|l| l.starts_with("strategy=empty "))
+        .unwrap_or_else(|| panic!("no strategy=empty line in stdout: {stdout}"));
+    assert!(line.contains("kind=heuristic-rules"), "line: {line}");
+    assert!(line.contains("games=6"), "line: {line}");
+    assert!(line.contains("unfinished=0"), "line: {line}");
+    assert!(line.contains("agreement=none"), "line: {line}");
+
+    assert!(out.join("evaluation.json").exists());
 }
 
 #[test]

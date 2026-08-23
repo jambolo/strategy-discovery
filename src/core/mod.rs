@@ -6,11 +6,13 @@
 //! - [`features`]: tiered feature vocabulary and the feature-expression algebra.
 //! - [`derived`]: tier-1 feature extractor built mechanically from `GamePrimitives`.
 //! - [`dsl`]: heuristic-strategy DSL (ordered decision lists).
+//! - [`featurizer`]: game-neutral state -> feature-environment adapter (tier-1 + supplied extractor, canonical frame).
 //! - [`interpreter`]: generic rule-interpreter `Strategy` over the DSL.
 
 pub mod derived;
 pub mod dsl;
 pub mod features;
+pub mod featurizer;
 pub mod interpreter;
 pub mod symmetry;
 pub mod traits;

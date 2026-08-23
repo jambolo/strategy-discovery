@@ -6,7 +6,7 @@
 //! `--strict` loss-rate check (exit 3 after everything has been written).
 //!
 //! Write order: every strategy is evaluated before anything is written, so a runtime error
-//! (including a `heuristic-rules` strategy, which is not yet executable) writes nothing.
+//! writes nothing.
 
 use std::path::{Path, PathBuf};
 
@@ -187,12 +187,13 @@ fn provenance(report: &EvaluationReport, config: &EvaluateConfig) -> Provenance 
         corpus_run_id: None,
         annotations_run_id: report.config.annotations.as_ref().and_then(|a| a.run_id.clone()),
         annotations_mode: report.config.annotations.as_ref().map(|a| a.mode.clone()),
+        discovery: None,
     }
 }
 
 /// Prints the frozen result lines: one `strategy=` line per evaluated strategy, then the
-/// `evaluation=` summary line.
-fn print_result(report: &EvaluationReport, novelties: &[f64], archive_entries: usize, out: &Path) {
+/// `evaluation=` summary line. Shared by `evaluate` and `discover`.
+pub(crate) fn print_result(report: &EvaluationReport, novelties: &[f64], archive_entries: usize, out: &Path) {
     for (evaluation, novelty) in report.strategies.iter().zip(novelties) {
         let agreement = match evaluation.headline.agreement_rate {
             Some(rate) => format!("{rate:.3}"),

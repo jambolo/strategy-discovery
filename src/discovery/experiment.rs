@@ -16,6 +16,27 @@
 //! [annotate]
 //! enabled = true                  # default true
 //! engine_depth = 9                # optional
+//! mode = "corpus"                 # default "corpus"; or "exhaustive"
+//!
+//! [mine]
+//! engine = "cart"                 # default "cart"; or "linfa-trees"
+//! depths = [8]                    # default [8]
+//! min_leaf = 1                    # default 1
+//! seed = 0                        # default 0
+//! holdout_fraction = 0.0          # default 0.0, in [0, 1)
+//!
+//! [discover]
+//! games = 20                      # default 20, games per (opponent, seat) pairing
+//! seed = 0                        # default 0
+//! roster = "roster.toml"          # optional; default = the bundle's own roster
+//! reference = "perfect"           # optional; default = the effective roster's last entry
+//! archive = "archive"             # default "archive", relative to `out` unless absolute
+//! evaluator = "default"           # optional; default = the bundle's default evaluator
+//! max_plies = 200                 # optional
+//! strict = false                  # default false
+//! max_loss_rate = 0.0             # default 0.0
+//! threads = 4                     # optional
+//! serial = false                  # default false
 //!
 //! [analyze]
 //! analyzers = ["summary", "agreement"]   # default ["summary"]
@@ -49,14 +70,16 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 use crate::discovery::analyze::{AnalyzeOptions, AnalyzerRegistry};
-use crate::discovery::annotate::{AnnotateOptions, DEFAULT_SOLVER_LIMIT};
+use crate::discovery::annotate::{AnnotateMode, AnnotateOptions, DEFAULT_SOLVER_LIMIT};
 use crate::discovery::bundle::GameBundle;
 use crate::discovery::config::{CorpusError, GenerateConfig, resolve};
 use crate::discovery::corpus::GenerateOptions;
+use crate::discovery::evaluate::EvaluateConfig;
 use crate::discovery::summary::DiversityThresholds;
-use crate::io::{CorpusGame, IoError, SCHEMA_VERSION, check_schema_version};
+use crate::discovery::tournament::default_reference;
+use crate::io::{CorpusGame, IoError, MineParams, SCHEMA_VERSION, check_schema_version};
 use crate::strategy::engine::EngineGame;
-use crate::strategy::roster::RosterEntry;
+use crate::strategy::roster::{Roster, RosterEntry};
 
 /// Top-level experiment document; see the module docs for its TOML shape.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -79,6 +102,12 @@ pub struct ExperimentConfig<A> {
     /// The `analyze` stage's configuration: which analyzers to run and their thresholds.
     #[serde(default)]
     pub analyze: AnalyzeSection,
+    /// Heuristic mining parameters shared by the `analyze` stage's rule-induction step.
+    #[serde(default)]
+    pub mine: MineParams,
+    /// The `discover` stage's configuration: benchmark evaluation and archiving.
+    #[serde(default)]
+    pub discover: DiscoverSection,
     /// The `report` stage's configuration: where to write the rendered report.
     #[serde(default)]
     pub report: ReportSection,
@@ -121,6 +150,9 @@ pub struct AnnotateSection {
     /// (`full_search_depth`).
     #[serde(default)]
     pub engine_depth: Option<u32>,
+    /// Which positions the annotation stage covers.
+    #[serde(default = "default_annotate_mode")]
+    pub mode: AnnotateMode,
 }
 
 impl Default for AnnotateSection {
@@ -128,6 +160,7 @@ impl Default for AnnotateSection {
         AnnotateSection {
             enabled: true,
             engine_depth: None,
+            mode: AnnotateMode::Corpus,
         }
     }
 }
@@ -135,6 +168,11 @@ impl Default for AnnotateSection {
 /// `true`, the default for [`AnnotateSection::enabled`].
 fn default_true() -> bool {
     true
+}
+
+/// [`AnnotateMode::Corpus`], the default for [`AnnotateSection::mode`].
+fn default_annotate_mode() -> AnnotateMode {
+    AnnotateMode::Corpus
 }
 
 /// TOML `[analyze]` section.
@@ -190,6 +228,75 @@ fn default_report_out() -> PathBuf {
     PathBuf::from("report.md")
 }
 
+/// TOML `[discover]` section: the benchmark-evaluation-and-archive stage.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct DiscoverSection {
+    /// Games per (opponent, seat) pairing.
+    #[serde(default = "default_discover_games")]
+    pub games: usize,
+    /// Master seed for tournaments and the agreement pass.
+    #[serde(default)]
+    pub seed: u64,
+    /// Path to a roster TOML file, relative to the experiment file; `None` uses the bundle's
+    /// own roster.
+    #[serde(default)]
+    pub roster: Option<PathBuf>,
+    /// Roster entry name the headline loss rate is measured against; `None` uses the last entry
+    /// of the effective roster.
+    #[serde(default)]
+    pub reference: Option<String>,
+    /// Archive directory, relative to the run's `out` directory unless absolute.
+    #[serde(default = "default_discover_archive")]
+    pub archive: PathBuf,
+    /// Evaluator name; `None` uses the bundle's default evaluator.
+    #[serde(default)]
+    pub evaluator: Option<String>,
+    /// Ply cap per game, if any.
+    #[serde(default)]
+    pub max_plies: Option<usize>,
+    /// Whether a strict-failure loss rate should be treated as fatal by the caller.
+    #[serde(default)]
+    pub strict: bool,
+    /// Maximum loss rate against the reference before a strict failure is raised.
+    #[serde(default)]
+    pub max_loss_rate: f64,
+    /// Private rayon pool size; `None` uses the global pool.
+    #[serde(default)]
+    pub threads: Option<usize>,
+    /// Play every game serially (takes precedence over `threads`).
+    #[serde(default)]
+    pub serial: bool,
+}
+
+impl Default for DiscoverSection {
+    fn default() -> Self {
+        DiscoverSection {
+            games: default_discover_games(),
+            seed: 0,
+            roster: None,
+            reference: None,
+            archive: default_discover_archive(),
+            evaluator: None,
+            max_plies: None,
+            strict: false,
+            max_loss_rate: 0.0,
+            threads: None,
+            serial: false,
+        }
+    }
+}
+
+/// `20`, the default for [`DiscoverSection::games`].
+fn default_discover_games() -> usize {
+    20
+}
+
+/// `"archive"`, the default for [`DiscoverSection::archive`].
+fn default_discover_archive() -> PathBuf {
+    PathBuf::from("archive")
+}
+
 impl<A: DeserializeOwned> ExperimentConfig<A> {
     /// Parses an [`ExperimentConfig`] from an in-memory TOML document. Parse errors are
     /// reported as [`IoError::Toml`] with `path` set to `"<string>"`. Performs no validation;
@@ -237,10 +344,30 @@ pub struct ResolvedExperiment<A> {
     pub generate: GenerateOptions,
     /// Options for the `annotate` stage; `None` when annotation is disabled.
     pub annotate: Option<AnnotateOptions>,
+    /// The `annotate` stage's mode, meaningful even when `annotate` is `None`.
+    pub annotate_mode: AnnotateMode,
     /// Options for the `analyze` stage.
     pub analyze: AnalyzeOptions,
+    /// Resolved `discover` stage configuration.
+    pub discover: ResolvedDiscover,
     /// Report output path, resolved against `out`.
     pub report_out: PathBuf,
+}
+
+/// A [`DiscoverSection`] resolved against a loaded roster (if any), a defaulted reference and
+/// evaluator, and an absolute-or-`out`-relative archive directory.
+#[derive(Debug, Clone)]
+pub struct ResolvedDiscover {
+    /// Plain options for the evaluation harness.
+    pub config: EvaluateConfig,
+    /// The `[discover] roster` file, loaded and validated, if one was named.
+    pub roster: Option<Roster>,
+    /// Archive directory, resolved against `out`.
+    pub archive_dir: PathBuf,
+    /// Whether a strict-failure loss rate should be treated as fatal by the caller.
+    pub strict: bool,
+    /// Maximum loss rate against the reference before a strict failure is raised.
+    pub max_loss_rate: f64,
 }
 
 /// Validates `config` against `bundle` and `registry`, loads its sweep, and resolves every
@@ -273,6 +400,7 @@ pub fn resolve_experiment<G: EngineGame + CorpusGame>(
     if config.generate.threads == Some(0) {
         return Err(CorpusError::Config("[generate] threads must be >= 1, got 0".to_string()));
     }
+    config.mine.validate()?;
 
     let GenerateSection {
         sweep: sweep_source,
@@ -317,7 +445,12 @@ pub fn resolve_experiment<G: EngineGame + CorpusGame>(
         }
     }
 
-    let AnnotateSection { enabled, engine_depth } = config.annotate;
+    let mine = config.mine.clone();
+    let AnnotateSection {
+        enabled,
+        engine_depth,
+        mode: annotate_mode,
+    } = config.annotate;
     let AnalyzeSection {
         analyzers,
         strict,
@@ -337,6 +470,31 @@ pub fn resolve_experiment<G: EngineGame + CorpusGame>(
         analyzers,
         thresholds,
         strict,
+        mine,
+    };
+
+    let section = config.discover;
+    let roster = section.roster.as_ref().map(|p| load_roster(&base_dir.join(p))).transpose()?;
+    let reference = section
+        .reference
+        .clone()
+        .unwrap_or(default_reference(roster.as_ref().unwrap_or(&bundle.roster))?);
+    let evaluator = section.evaluator.clone().unwrap_or_else(|| bundle.default_evaluator.clone());
+    let archive_dir = out.join(&section.archive);
+    let discover = ResolvedDiscover {
+        config: EvaluateConfig {
+            evaluator,
+            games_per_pairing: section.games,
+            seed: section.seed,
+            max_plies: section.max_plies,
+            reference,
+            threads: section.threads,
+            serial: section.serial,
+        },
+        roster,
+        archive_dir,
+        strict: section.strict,
+        max_loss_rate: section.max_loss_rate,
     };
 
     Ok(ResolvedExperiment {
@@ -346,9 +504,28 @@ pub fn resolve_experiment<G: EngineGame + CorpusGame>(
         sweep,
         generate,
         annotate,
+        annotate_mode,
         analyze,
+        discover,
         report_out,
     })
+}
+
+/// Reads and validates a roster TOML file (`name`, `version`, `[[entries]]`), same shape and
+/// validation as [`crate::cli::evaluate`]'s own loader.
+fn load_roster(path: &Path) -> Result<Roster, CorpusError> {
+    let text = std::fs::read_to_string(path).map_err(|source| IoError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let roster: Roster = toml::from_str(&text).map_err(|e| IoError::Toml {
+        path: path.to_path_buf(),
+        message: e.to_string(),
+    })?;
+    roster
+        .validate()
+        .map_err(|e| CorpusError::Config(format!("roster file {}: {e}", path.display())))?;
+    Ok(roster)
 }
 
 /// A standalone strategy roster file: `[[strategies]]` entries in the same shape as a
@@ -655,6 +832,142 @@ bogus = 1
         let missing_sweep = mutated(|c| c.generate.sweep = SweepSource::Path(PathBuf::from("missing-sweep.toml")));
         let err = resolve_experiment(missing_sweep, base_dir, &bundle, &registry, None).unwrap_err();
         assert!(err.to_string().contains("missing-sweep.toml"));
+    }
+
+    #[test]
+    fn parses_new_sections_with_defaults() {
+        let config = ExperimentConfig::<Move>::from_toml_str(
+            r#"
+schema_version = 1
+name = "n"
+game = "tictactoe"
+out = "runs/n"
+
+[generate]
+sweep = "x.toml"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.mine, MineParams::default());
+        assert_eq!(config.discover, DiscoverSection::default());
+        assert_eq!(config.annotate.mode, AnnotateMode::Corpus);
+        assert_eq!(config.discover.games, 20);
+        assert_eq!(config.discover.archive, PathBuf::from("archive"));
+    }
+
+    #[test]
+    fn parses_mine_discover_and_annotate_mode() {
+        let text = r#"
+schema_version = 1
+name = "n"
+game = "tictactoe"
+out = "runs/n"
+
+[generate]
+sweep = "x.toml"
+
+[annotate]
+mode = "exhaustive"
+
+[mine]
+engine = "cart"
+depths = [6, 8]
+min_leaf = 2
+holdout_fraction = 0.2
+
+[discover]
+games = 4
+seed = 9
+roster = "roster-tiny.toml"
+reference = "perfect"
+strict = true
+max_loss_rate = 0.5
+"#;
+        let config = ExperimentConfig::<Move>::from_toml_str(text).unwrap();
+
+        assert_eq!(config.annotate.mode, AnnotateMode::Exhaustive);
+        assert_eq!(config.mine.engine, "cart");
+        assert_eq!(config.mine.depths, vec![6, 8]);
+        assert_eq!(config.mine.min_leaf, 2);
+        assert_eq!(config.mine.holdout_fraction, 0.2);
+        assert_eq!(config.mine.seed, 0);
+        assert_eq!(config.discover.games, 4);
+        assert_eq!(config.discover.seed, 9);
+        assert_eq!(config.discover.roster, Some(PathBuf::from("roster-tiny.toml")));
+        assert_eq!(config.discover.reference, Some("perfect".to_string()));
+        assert!(config.discover.strict);
+        assert_eq!(config.discover.max_loss_rate, 0.5);
+    }
+
+    #[test]
+    fn rejects_unknown_discover_field() {
+        let text = r#"
+schema_version = 1
+name = "n"
+game = "tictactoe"
+out = "runs/n"
+
+[generate]
+sweep = "x.toml"
+
+[discover]
+bogus = 1
+"#;
+        match ExperimentConfig::<Move>::from_toml_str(text) {
+            Err(CorpusError::Io(IoError::Toml { message, .. })) => assert!(message.contains("bogus")),
+            other => panic!("expected Err(Io(Toml {{ .. }})), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_rejects_invalid_mine() {
+        let bundle = game_bundle();
+        let registry = registry_with_agreement();
+        let config = mutated(|c| c.mine.engine = "x".to_string());
+
+        match resolve_experiment(config, Path::new("tests/fixtures"), &bundle, &registry, None) {
+            Err(CorpusError::Config(msg)) => assert!(msg.contains("[mine] engine"), "expected message, got {msg:?}"),
+            other => panic!("expected Err(Config(_)), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolves_discover_defaults() {
+        let bundle = game_bundle();
+        let registry = registry_with_agreement();
+
+        let resolved = resolve_experiment::<TicTacToe>(fixture(), Path::new("tests/fixtures"), &bundle, &registry, None).unwrap();
+
+        assert_eq!(resolved.annotate_mode, AnnotateMode::Corpus);
+        assert_eq!(resolved.analyze.mine, MineParams::default());
+        assert_eq!(resolved.discover.config.games_per_pairing, 20);
+        assert_eq!(resolved.discover.config.seed, 0);
+        assert_eq!(resolved.discover.config.reference, "perfect");
+        assert_eq!(resolved.discover.config.evaluator, "default");
+        assert!(!resolved.discover.config.serial);
+        assert!(resolved.discover.roster.is_none());
+        assert_eq!(resolved.discover.archive_dir, resolved.out.join("archive"));
+        assert!(!resolved.discover.strict);
+        assert_eq!(resolved.discover.max_loss_rate, 0.0);
+    }
+
+    #[test]
+    fn resolves_discover_roster_and_mode() {
+        let bundle = game_bundle();
+        let registry = registry_with_agreement();
+        let config = mutated(|c| {
+            c.annotate.mode = AnnotateMode::Exhaustive;
+            c.discover.roster = Some(PathBuf::from("roster-tiny.toml"));
+            c.discover.games = 2;
+        });
+
+        let resolved = resolve_experiment::<TicTacToe>(config, Path::new("tests/fixtures"), &bundle, &registry, None).unwrap();
+
+        assert_eq!(resolved.annotate_mode, AnnotateMode::Exhaustive);
+        assert_eq!(resolved.discover.roster.as_ref().unwrap().id(), "tiny-v1");
+        assert_eq!(resolved.discover.config.reference, "perfect");
+        assert_eq!(resolved.discover.config.games_per_pairing, 2);
     }
 
     #[test]

@@ -400,7 +400,6 @@ pub fn strict_failures(report: &EvaluationReport, max_loss_rate: f64) -> Vec<Str
 mod tests {
     use super::*;
     use crate::core::dsl::HeuristicStrategy;
-    use crate::core::traits::MatchError;
     use crate::discovery::annotate::{AnnotateOptions, annotate_corpus};
     use crate::discovery::config::GenerateConfig;
     use crate::discovery::corpus::{GenerateOptions, generate};
@@ -591,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn heuristic_rules_is_an_error() {
+    fn heuristic_rules_plays_and_is_evaluated() {
         let bundle = game_bundle();
         let roster = tiny_roster();
         let strategies = vec![RosterEntry {
@@ -602,10 +601,18 @@ mod tests {
         }];
         let cfg = config(0, true, None);
 
-        let err = evaluate_strategies(&bundle, &strategies, Some(&roster), None, &cfg).unwrap_err();
-        assert!(matches!(
-            err,
-            CorpusError::Match(MatchError::Strategy(StrategyError::Unimplemented { .. }))
-        ));
+        let report = evaluate_strategies(&bundle, &strategies, Some(&roster), None, &cfg).unwrap();
+
+        assert_eq!(report.strategies.len(), 1);
+        let eval = &report.strategies[0];
+        assert_eq!(eval.name, "empty");
+        assert_eq!(eval.kind, "heuristic-rules");
+        assert_eq!(eval.headline.games, 12);
+        assert_eq!(eval.headline.unfinished, 0);
+        assert_eq!(eval.tournament.totals.games, 12);
+        assert_eq!(eval.tournament.totals.unfinished, 0);
+        assert!(eval.agreement.is_none());
+        assert!(eval.signature.is_none());
+        assert!(eval.headline.agreement_rate.is_none());
     }
 }

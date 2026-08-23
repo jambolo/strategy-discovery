@@ -245,10 +245,8 @@ fn roster_entries_all_build_and_play() {
     let heuristic_provider = registry.build(&heuristic_spec).unwrap();
     assert_eq!(heuristic_provider.kind(), kinds::HEURISTIC_RULES);
     let legal = TicTacToeRules.legal_actions(&Board::empty());
-    match heuristic_provider.create(0).choose(&Board::empty(), &legal) {
-        Err(StrategyError::Unimplemented { kind, .. }) => assert_eq!(kind, kinds::HEURISTIC_RULES),
-        other => panic!("expected Unimplemented, got {other:?}"),
-    }
+    let chosen = heuristic_provider.create(0).choose(&Board::empty(), &legal).unwrap();
+    assert!(legal.contains(&chosen));
 
     match registry.build(&StrategySpec::Evolutionary) {
         Err(StrategyError::Unimplemented { kind, .. }) => assert_eq!(kind, kinds::EVOLUTIONARY),

@@ -82,6 +82,43 @@ fn exhaustive_annotation_runs_from_the_cli() {
 }
 
 #[test]
+fn pipeline_exhaustive_annotation_mode() {
+    let dir = out_dir("pipeline_exhaustive_annotation_mode");
+
+    let sweep_path = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/generate-small.toml").replace('\\', "/");
+    let experiment_path = dir.join("experiment.toml");
+    std::fs::write(
+        &experiment_path,
+        format!(
+            "schema_version = 1\nname = \"exhaustive-mode\"\ngame = \"tictactoe\"\nout = \"run\"\n\n[generate]\nsweep = \"{sweep_path}\"\n\n[annotate]\nmode = \"exhaustive\"\n"
+        ),
+    )
+    .unwrap();
+    let experiment_str = experiment_path.to_str().expect("temp path is utf-8");
+
+    let out_path = dir.join("run");
+    let out_str = out_path.to_str().expect("temp path is utf-8");
+
+    let (code, stdout, stderr) = cli(&[
+        "pipeline",
+        "--experiment",
+        experiment_str,
+        "--out",
+        out_str,
+        "--stages",
+        "annotate",
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(
+        stdout.contains("mode=exhaustive annotated=5478 terminal=958 disagreements=0"),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("stages=annotate"), "stdout: {stdout}");
+    assert!(out_path.join("annotations.jsonl").exists());
+    assert!(out_path.join("annotate.json").exists());
+}
+
+#[test]
 fn no_subcommand_prints_name_and_version() {
     let (code, stdout, _stderr) = cli(&[]);
     assert_eq!(code, 0);

@@ -9,12 +9,16 @@ pub mod archive;
 pub mod bundle;
 pub mod config;
 pub mod corpus;
+pub mod dataset;
+pub mod discover;
 pub mod evaluate;
 pub mod experiment;
 pub mod match_engine;
+pub mod mine;
 pub mod solver;
 pub mod summary;
 pub mod tournament;
+pub mod tree;
 
 pub use match_engine::{RayonMatchEngine, game_seed, play_game, player_seed, splitmix64};
 
@@ -28,14 +32,18 @@ pub use archive::{Appended, Archive, NOVELTY_METHOD, NewEntry, behavior_distance
 pub use bundle::GameBundle;
 pub use config::{Cell, CorpusError, GenerateConfig, NamedOpening, Pairing, ResolvedConfig, cell_seed, resolve};
 pub use corpus::{GenerateOptions, RunMetadata, expand_game, generate};
+pub use dataset::{Dataset, DatasetAnalyzer, DatasetSource, build_dataset, dataset_from_context};
+pub use discover::{DiscoverOutcome, run_discover};
 pub use evaluate::{
     AGREEMENT_SEED_SALT, AgreementOutcome, AnnotationSet, EvaluateConfig, SIGNATURE_SAMPLE, evaluate_strategies, evaluate_strategy,
     evaluation_id, headline, load_annotations, measure_agreement, mode_name, strict_failures,
 };
 pub use experiment::{
-    AnalyzeSection, AnnotateSection, ExperimentConfig, GenerateSection, ReportSection, ResolvedExperiment, StrategyFile,
-    SweepSource, load_experiment, resolve_experiment,
+    AnalyzeSection, AnnotateSection, DiscoverSection, ExperimentConfig, GenerateSection, ReportSection, ResolvedDiscover,
+    ResolvedExperiment, StrategyFile, SweepSource, load_experiment, resolve_experiment,
 };
+pub use mine::{MineAnalyzer, Miner};
 pub use solver::{ExhaustiveSolver, Solved, SolverError, reachable_states};
 pub use summary::{CorpusSummary, DiversityThresholds, OutcomeCounts, SummaryAnalyzer, analyze_corpus, summarize, verify_corpus};
 pub use tournament::{TournamentConfig, TournamentRun, default_reference, run_tournament, run_tournament_detailed};
+pub use tree::{Node, Tree};

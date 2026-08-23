@@ -13,7 +13,7 @@
 | # | Name | Status | Branch | Merge commit | Notes |
 | --: | --- | --- | --- | --- | --- |
 | 1 | Strategy evaluation harness, archive, and hardening | done | milestone/1-evaluation-harness (deleted) | 5ee100f | plan.md Phase 7 / Gate C; 4 phases, 24 steps; Gate C PASS; project gate 14/14 PASS |
-| 2 | Heuristic mining and `discover` | pending | | | plan.md Phase 8 |
+| 2 | Heuristic mining and `discover` | in-progress | milestone/2-heuristic-mining | | plan.md Phase 8 |
 | 3 | Concept induction | pending | | | plan.md Phase 9 (soft DoD) |
 
 ## Events
@@ -32,3 +32,4 @@
 | 1 | phase 4 done | 2026-08-23; 177e058; one in-flight step-22 column rename (command -> cmd); determinism 6/6 YES; release pool 1560.6 games/s (6.03x), evaluate pool 3777 games/s; Gate C PASS; gate 14/14 PASS |
 | 1 | evaluated | 2026-08-23; lead re-ran m1 DoD on branch: cargo test --workspace exit 0, 21 ok / 0 failed, wall 41.55 s (<= 60); fmt/clippy/doc 0; 4 invariant proptests pass; evaluate twice byte-identical (3 files), perfect loss 0.0 all 7 opponents both seats, random vs perfect 0.875, depth-9 agreement 1.000; archive 3 entries w/ provenance+novelty, round-trip test ok; adding-a-game.md checklist present; games.rs only non-test tictactoe; both evidence files 8-field header; Cargo.toml = 3 dev-deps + approved float_roundtrip |
 | 1 | merged | 2026-08-23; cleanup aa699ab (roadmap + 24 steps + 24 reports removed; brief, ledger, gate-report kept); squash 5ee100f on develop from base 48c97c8; branch deleted |
+| 2 | branched | 2026-08-23; milestone/2-heuristic-mining from develop 81d268c; plan-name strategy-discovery-m2 |

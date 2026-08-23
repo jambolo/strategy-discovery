@@ -206,7 +206,6 @@ pub fn run_tournament<G: EngineGame>(
 mod tests {
     use super::*;
     use crate::core::dsl::HeuristicStrategy;
-    use crate::core::traits::{MatchError, StrategyError};
     use crate::games::tictactoe::game_bundle;
     use crate::strategy::registry::StrategySpec;
 
@@ -317,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn heuristic_rules_under_test_is_an_error_not_a_loss() {
+    fn heuristic_rules_under_test_plays_and_is_scored() {
         let bundle = game_bundle();
         let registry = registry();
         let roster = tiny_roster();
@@ -329,11 +328,12 @@ mod tests {
         };
         let cfg = config(1, 0);
 
-        let err = run_tournament(&bundle, &registry, &under_test, &roster, &cfg).unwrap_err();
-        assert!(matches!(
-            err,
-            CorpusError::Match(MatchError::Strategy(StrategyError::Unimplemented { .. }))
-        ));
+        let result = run_tournament(&bundle, &registry, &under_test, &roster, &cfg).unwrap();
+
+        assert_eq!(result.reference, "perfect");
+        assert_eq!(result.opponents.len(), 3);
+        assert_eq!(result.totals.games, 6);
+        assert_eq!(result.totals.unfinished, 0);
     }
 
     #[test]

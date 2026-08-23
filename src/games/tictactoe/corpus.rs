@@ -1,10 +1,12 @@
 //! The tic-tac-toe [`GameBundle`]: rules, `[X, O]`, evaluators `default` (open-lines heuristic) and
-//! `zero` (`ConstantEvaluator(0.0)`), the D4 canonicalizer and primitives, the benchmark roster as
-//! both `default_strategies` and `roster`, exhaustive depth 9 and 765 known canonical positions.
+//! `zero` (`ConstantEvaluator(0.0)`), the D4 canonicalizer and primitives, the tier-2
+//! [`TicTacToeFeatures`] extractor, the benchmark roster as both `default_strategies` and `roster`,
+//! exhaustive depth 9 and 765 known canonical positions.
 
 use super::board::{Player, TicTacToe};
 use super::canonical::TicTacToeCanonicalizer;
 use super::eval::TicTacToeEvaluator;
+use super::features::TicTacToeFeatures;
 use super::primitives::TicTacToePrimitives;
 use super::roster::benchmark_roster;
 use super::rules::TicTacToeRules;
@@ -29,6 +31,7 @@ pub fn game_bundle() -> GameBundle<TicTacToe> {
         default_evaluator: "default".to_string(),
         canonicalizer: Some(Arc::new(TicTacToeCanonicalizer::new())),
         primitives: Some(Arc::new(TicTacToePrimitives)),
+        supplied_features: Some(Arc::new(TicTacToeFeatures)),
         default_strategies: roster.entries.clone(),
         roster,
         full_search_depth: 9,
@@ -39,7 +42,9 @@ pub fn game_bundle() -> GameBundle<TicTacToe> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::derived::PrimitiveFeatures;
     use crate::core::symmetry::Permutation;
+    use crate::core::traits::FeatureExtractor;
     use crate::discovery::config::CorpusError;
     use crate::games::tictactoe::Board;
 
@@ -116,5 +121,49 @@ mod tests {
         assert_eq!(bundle.roster.entries, bundle.default_strategies);
         assert_eq!(bundle.roster.entries.len(), 7);
         assert_eq!(bundle.roster.entries.last().unwrap().name, "perfect");
+    }
+
+    #[test]
+    fn featurizer_vocabulary_order_and_count() {
+        let featurizer = game_bundle().featurizer(true).unwrap();
+        let names: Vec<String> = featurizer.vocabulary().defs().iter().map(|d| d.name.clone()).collect();
+
+        let tier1_names: Vec<String> = PrimitiveFeatures::new(TicTacToeRules, TicTacToePrimitives)
+            .definitions()
+            .iter()
+            .map(|d| d.name.clone())
+            .collect();
+        assert_eq!(tier1_names.len(), 47);
+
+        let mut expected = vec!["side_to_move".to_string()];
+        expected.extend(tier1_names);
+        expected.extend(TicTacToeFeatures.definitions().iter().map(|d| d.name.clone()));
+
+        assert_eq!(names, expected);
+        assert_eq!(expected.len(), 70);
+        assert_eq!(&names[..48], &expected[..48]);
+        for name in &names[48..] {
+            assert!(name.starts_with("ttt."), "unexpected tier-2 name: {name}");
+        }
+    }
+
+    #[test]
+    fn featurizer_without_supplied_is_tier1_only() {
+        let vocabulary_owner = game_bundle().featurizer(false).unwrap();
+        let vocabulary = vocabulary_owner.vocabulary();
+        assert_eq!(vocabulary.len(), 48);
+        assert!(vocabulary.defs().iter().all(|d| !d.name.starts_with("ttt.")));
+    }
+
+    #[test]
+    fn featurizer_requires_primitives() {
+        let mut bundle = game_bundle();
+        bundle.primitives = None;
+
+        match bundle.featurizer(true) {
+            Err(CorpusError::Precondition(msg)) => assert!(msg.contains("declares no primitives")),
+            Err(other) => panic!("expected Err(CorpusError::Precondition(_)), got Err({other:?})"),
+            Ok(_) => panic!("expected Err(CorpusError::Precondition(_)), got Ok(_)"),
+        }
     }
 }
