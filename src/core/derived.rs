@@ -13,12 +13,16 @@ use std::marker::PhantomData;
 /// Tier-1 extractor derived mechanically from a game's primitives and rules.
 ///
 /// Produces `free`/`mine`/`theirs` occupancy sets over all positions, plus per-orbit
-/// and per-line occupancy counts, all relative to `rules.player_to_move(state)`.
+/// and per-line occupancy counts, all relative to `rules.player_to_move(state)`. In
+/// `extended` mode, also mints line-signature counts (`lines.mine{a}.theirs{b}`) and
+/// cell-membership sets (`cells.mine{a}.theirs{b}.ge{k}`), derived only from `lines`
+/// and occupancy.
 pub struct PrimitiveFeatures<G: GameDomain, R: GameRules<G>, P: GamePrimitives<G>> {
     rules: R,
     primitives: P,
     orbits: Vec<Vec<usize>>,
     lines: Vec<Vec<usize>>,
+    extended: bool,
     _game: PhantomData<fn() -> G>,
 }
 
@@ -33,6 +37,24 @@ impl<G: GameDomain, R: GameRules<G>, P: GamePrimitives<G>> PrimitiveFeatures<G, 
             primitives,
             orbits,
             lines,
+            extended: false,
+            _game: PhantomData,
+        }
+    }
+
+    /// Builds an extractor that additionally mints the extended mechanical families —
+    /// line-signature counts (`lines.mine{a}.theirs{b}`) and cell-membership sets
+    /// (`cells.mine{a}.theirs{b}.ge{k}`) — after the base definitions. Derived only
+    /// from `primitives.lines()` and occupancy.
+    pub fn extended(rules: R, primitives: P) -> Self {
+        let orbits = primitives.symmetry_group().orbits();
+        let lines = primitives.lines();
+        PrimitiveFeatures {
+            rules,
+            primitives,
+            orbits,
+            lines,
+            extended: true,
             _game: PhantomData,
         }
     }
@@ -64,6 +86,28 @@ impl<G: GameDomain, R: GameRules<G>, P: GamePrimitives<G>> PrimitiveFeatures<G, 
 /// Formats `positions` the way [`FeatureValue::Set`] displays, e.g. `{0, 2, 6}`.
 fn format_positions(positions: &[usize]) -> String {
     FeatureValue::Set(positions.iter().copied().collect()).to_string()
+}
+
+/// The `(a, b)` line-signature pairs realizable by some line, in `(a asc, b asc)`
+/// order, for Family A (`lines.mine{a}.theirs{b}`) when `for_family_b` is `false`, or
+/// Family B (`cells.mine{a}.theirs{b}.ge{k}`) when `true`. Shared by `definitions()`
+/// and `extract()` so both mint exactly the same name sets.
+fn realizable_signatures(lines: &[Vec<usize>], for_family_b: bool) -> Vec<(usize, usize)> {
+    let max_len = lines.iter().map(Vec::len).max().unwrap_or(0);
+    let mut sigs = Vec::new();
+    for a in 0..=max_len {
+        for b in 0..=(max_len - a) {
+            let realizable = if for_family_b {
+                lines.iter().any(|l| l.len() > a + b)
+            } else {
+                lines.iter().any(|l| l.len() >= a + b)
+            };
+            if realizable {
+                sigs.push((a, b));
+            }
+        }
+    }
+    sigs
 }
 
 impl<G: GameDomain, R: GameRules<G>, P: GamePrimitives<G>> FeatureExtractor<G> for PrimitiveFeatures<G, R, P> {
@@ -125,6 +169,33 @@ impl<G: GameDomain, R: GameRules<G>, P: GamePrimitives<G>> FeatureExtractor<G> f
             ));
         }
 
+        if self.extended {
+            let kmax = (0..self.primitives.position_count())
+                .map(|p| self.lines.iter().filter(|l| l.contains(&p)).count())
+                .max()
+                .unwrap_or(0);
+
+            for (a, b) in realizable_signatures(&self.lines, false) {
+                defs.push(FeatureDef::native(
+                    format!("lines.mine{a}.theirs{b}"),
+                    Tier::Primitive,
+                    format!("number of lines with exactly {a} positions held by the player to move and {b} held by opponents"),
+                ));
+            }
+
+            for (a, b) in realizable_signatures(&self.lines, true) {
+                for k in 1..=kmax {
+                    defs.push(FeatureDef::native(
+                        format!("cells.mine{a}.theirs{b}.ge{k}"),
+                        Tier::Primitive,
+                        format!(
+                            "empty positions on at least {k} lines that each have exactly {a} positions held by the player to move and {b} held by opponents"
+                        ),
+                    ));
+                }
+            }
+        }
+
         defs
     }
 
@@ -174,6 +245,46 @@ impl<G: GameDomain, R: GameRules<G>, P: GamePrimitives<G>> FeatureExtractor<G> f
             out.insert(format!("line{l}.mine"), FeatureValue::Int(line_mine));
             out.insert(format!("line{l}.theirs"), FeatureValue::Int(line_theirs));
             out.insert(format!("line{l}.empty"), FeatureValue::Int(line_empty));
+        }
+
+        if self.extended {
+            let sigs: Vec<(usize, usize)> = self
+                .lines
+                .iter()
+                .map(|line| {
+                    (
+                        line.iter().filter(|p| mine.contains(p)).count(),
+                        line.iter().filter(|p| theirs.contains(p)).count(),
+                    )
+                })
+                .collect();
+            let kmax = (0..n)
+                .map(|p| self.lines.iter().filter(|l| l.contains(&p)).count())
+                .max()
+                .unwrap_or(0);
+
+            for (a, b) in realizable_signatures(&self.lines, false) {
+                let count = sigs.iter().filter(|&&s| s == (a, b)).count() as i64;
+                out.insert(format!("lines.mine{a}.theirs{b}"), FeatureValue::Int(count));
+            }
+
+            for (a, b) in realizable_signatures(&self.lines, true) {
+                for k in 1..=kmax {
+                    let set: BTreeSet<usize> = free
+                        .iter()
+                        .copied()
+                        .filter(|&p| {
+                            self.lines
+                                .iter()
+                                .enumerate()
+                                .filter(|(l, line)| line.contains(&p) && sigs[*l] == (a, b))
+                                .count()
+                                >= k
+                        })
+                        .collect();
+                    out.insert(format!("cells.mine{a}.theirs{b}.ge{k}"), FeatureValue::Set(set));
+                }
+            }
         }
 
         out
@@ -366,5 +477,129 @@ mod tests {
         assert_eq!(values.get("theirs"), Some(&FeatureValue::Set(Set::from([3]))));
         assert_eq!(values.get("line1.mine"), Some(&FeatureValue::Int(1)));
         assert_eq!(values.get("line1.theirs"), Some(&FeatureValue::Int(0)));
+    }
+
+    #[test]
+    fn extended_ring_definitions_shape_and_order() {
+        let base = extractor();
+        assert_eq!(base.definitions().len(), 23);
+
+        let ext = PrimitiveFeatures::extended(RingRules, RingPrimitives);
+        let defs = ext.definitions();
+        assert_eq!(defs.len(), 35);
+
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        let unique: Set<&str> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len(), "feature names must be unique");
+
+        for def in &defs {
+            assert_eq!(def.tier, Tier::Primitive);
+            assert!(def.is_native());
+        }
+
+        let base_names: Vec<String> = base.definitions().iter().map(|d| d.name.clone()).collect();
+        assert_eq!(
+            &names[0..23],
+            base_names.iter().map(String::as_str).collect::<Vec<_>>().as_slice()
+        );
+
+        assert_eq!(
+            &names[23..29],
+            &[
+                "lines.mine0.theirs0",
+                "lines.mine0.theirs1",
+                "lines.mine0.theirs2",
+                "lines.mine1.theirs0",
+                "lines.mine1.theirs1",
+                "lines.mine2.theirs0",
+            ]
+        );
+        assert_eq!(
+            &names[29..35],
+            &[
+                "cells.mine0.theirs0.ge1",
+                "cells.mine0.theirs0.ge2",
+                "cells.mine0.theirs1.ge1",
+                "cells.mine0.theirs1.ge2",
+                "cells.mine1.theirs0.ge1",
+                "cells.mine1.theirs0.ge2",
+            ]
+        );
+
+        assert_eq!(
+            defs[23].description,
+            "number of lines with exactly 0 positions held by the player to move and 0 held by opponents"
+        );
+        assert_eq!(
+            defs[29].description,
+            "empty positions on at least 1 lines that each have exactly 0 positions held by the player to move and 0 held by opponents"
+        );
+
+        let def_names: Set<String> = defs.iter().map(|d| d.name.clone()).collect();
+        let initial = RingRules.initial_state();
+        let values = ext.extract(&initial);
+        let value_names: Set<String> = values.iter().map(|(name, _)| name.clone()).collect();
+        assert_eq!(def_names, value_names);
+    }
+
+    #[test]
+    fn extended_ring_values() {
+        let ext = PrimitiveFeatures::extended(RingRules, RingPrimitives);
+        let rules = RingRules;
+
+        let initial = rules.initial_state();
+        let values = ext.extract(&initial);
+        assert_eq!(values.get("lines.mine0.theirs0"), Some(&FeatureValue::Int(4)));
+        assert_eq!(values.get("lines.mine0.theirs1"), Some(&FeatureValue::Int(0)));
+        assert_eq!(values.get("lines.mine1.theirs0"), Some(&FeatureValue::Int(0)));
+        assert_eq!(values.get("lines.mine2.theirs0"), Some(&FeatureValue::Int(0)));
+        assert_eq!(
+            values.get("cells.mine0.theirs0.ge1"),
+            Some(&FeatureValue::Set(Set::from([0, 1, 2, 3])))
+        );
+        assert_eq!(
+            values.get("cells.mine0.theirs0.ge2"),
+            Some(&FeatureValue::Set(Set::from([0, 1, 2, 3])))
+        );
+        assert_eq!(values.get("cells.mine0.theirs1.ge1"), Some(&FeatureValue::Set(Set::new())));
+        assert_eq!(values.get("cells.mine1.theirs0.ge1"), Some(&FeatureValue::Set(Set::new())));
+
+        let s1 = rules.apply(&initial, &1).unwrap();
+        let values = ext.extract(&s1);
+        assert_eq!(values.get("lines.mine0.theirs0"), Some(&FeatureValue::Int(2)));
+        assert_eq!(values.get("lines.mine0.theirs1"), Some(&FeatureValue::Int(2)));
+        assert_eq!(values.get("lines.mine1.theirs0"), Some(&FeatureValue::Int(0)));
+        assert_eq!(
+            values.get("cells.mine0.theirs0.ge1"),
+            Some(&FeatureValue::Set(Set::from([0, 2, 3])))
+        );
+        assert_eq!(
+            values.get("cells.mine0.theirs0.ge2"),
+            Some(&FeatureValue::Set(Set::from([3])))
+        );
+        assert_eq!(
+            values.get("cells.mine0.theirs1.ge1"),
+            Some(&FeatureValue::Set(Set::from([0, 2])))
+        );
+        assert_eq!(values.get("cells.mine0.theirs1.ge2"), Some(&FeatureValue::Set(Set::new())));
+        assert_eq!(values.get("cells.mine1.theirs0.ge1"), Some(&FeatureValue::Set(Set::new())));
+
+        let s2 = rules.apply(&s1, &3).unwrap();
+        let values = ext.extract(&s2);
+        assert_eq!(values.get("lines.mine0.theirs0"), Some(&FeatureValue::Int(0)));
+        assert_eq!(values.get("lines.mine0.theirs1"), Some(&FeatureValue::Int(2)));
+        assert_eq!(values.get("lines.mine1.theirs0"), Some(&FeatureValue::Int(2)));
+        assert_eq!(values.get("lines.mine1.theirs1"), Some(&FeatureValue::Int(0)));
+        assert_eq!(values.get("lines.mine2.theirs0"), Some(&FeatureValue::Int(0)));
+        assert_eq!(values.get("cells.mine0.theirs0.ge1"), Some(&FeatureValue::Set(Set::new())));
+        assert_eq!(
+            values.get("cells.mine0.theirs1.ge1"),
+            Some(&FeatureValue::Set(Set::from([0, 2])))
+        );
+        assert_eq!(
+            values.get("cells.mine1.theirs0.ge1"),
+            Some(&FeatureValue::Set(Set::from([0, 2])))
+        );
+        assert_eq!(values.get("cells.mine1.theirs0.ge2"), Some(&FeatureValue::Set(Set::new())));
     }
 }

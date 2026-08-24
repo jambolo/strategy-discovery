@@ -78,48 +78,7 @@ pub enum Command {
         engine_depth: Option<u32>,
     },
     /// Run analyzers over a corpus run directory; `--strict` exits 3 when a check fails.
-    Analyze {
-        /// Corpus run directory to analyze; required unless `--list-analyzers` is set.
-        #[arg(long)]
-        corpus: Option<PathBuf>,
-        /// Game whose analyzer registry to use; defaults to the corpus's own game, or to the
-        /// first known game when only listing analyzers.
-        #[arg(long)]
-        game: Option<String>,
-        /// Comma-separated analyzer names to run, in order; defaults to `summary`.
-        #[arg(long)]
-        analyzers: Option<String>,
-        /// Print one `name<TAB>description` line per registered analyzer and exit.
-        #[arg(long)]
-        list_analyzers: bool,
-        /// Minimum fraction of known canonical positions the corpus must cover.
-        #[arg(long)]
-        min_coverage: Option<f64>,
-        /// Minimum fraction of games that must end decisively.
-        #[arg(long)]
-        min_decisive: Option<f64>,
-        /// Minimum fraction of games that must have a distinct action sequence.
-        #[arg(long)]
-        min_distinct: Option<f64>,
-        /// Exit with status 3 when the corpus fails its diversity thresholds.
-        #[arg(long)]
-        strict: bool,
-        /// Induction engine for the `dataset`/`mine` analyzers; defaults to `MineParams::default`.
-        #[arg(long)]
-        mine_engine: Option<String>,
-        /// Comma-separated candidate depths for the `mine` analyzer; defaults to `MineParams::default`.
-        #[arg(long)]
-        mine_depths: Option<String>,
-        /// Minimum rows per leaf for the `mine` analyzer; defaults to `MineParams::default`.
-        #[arg(long)]
-        mine_min_leaf: Option<usize>,
-        /// Seed of the train/holdout shuffle for the `mine` analyzer; defaults to `MineParams::default`.
-        #[arg(long)]
-        mine_seed: Option<u64>,
-        /// Fraction of rows held out for evaluation by the `mine` analyzer; defaults to `MineParams::default`.
-        #[arg(long)]
-        mine_holdout: Option<f64>,
-    },
+    Analyze(analyze::AnalyzeArgs),
     /// Evaluate strategies against the game's benchmark roster and archive the results.
     Evaluate(evaluate::EvaluateArgs),
     /// Render a Markdown report from a run directory or a single analyzer output file.
@@ -162,35 +121,7 @@ where
             out,
             engine_depth,
         }) => annotate::run(corpus, exhaustive, game, out, engine_depth),
-        Some(Command::Analyze {
-            corpus,
-            game,
-            analyzers,
-            list_analyzers,
-            min_coverage,
-            min_decisive,
-            min_distinct,
-            strict,
-            mine_engine,
-            mine_depths,
-            mine_min_leaf,
-            mine_seed,
-            mine_holdout,
-        }) => analyze::run(
-            corpus,
-            game,
-            analyzers,
-            list_analyzers,
-            min_coverage,
-            min_decisive,
-            min_distinct,
-            strict,
-            mine_engine,
-            mine_depths,
-            mine_min_leaf,
-            mine_seed,
-            mine_holdout,
-        ),
+        Some(Command::Analyze(args)) => analyze::run(args),
         Some(Command::Evaluate(args)) => evaluate::run(args),
         Some(Command::Report(args)) => report::run(args),
         Some(Command::Pipeline(args)) => pipeline::run(args),

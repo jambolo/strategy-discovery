@@ -1,7 +1,8 @@
 //! Canonicalized per-position feature dataset for rule mining.
 //!
 //! [`build_dataset`] turns annotation records into a [`Dataset`]: one row per non-terminal
-//! canonical state, with every vocabulary feature encoded numerically and, for each `set`-kind
+//! canonical state, with every native AND derived vocabulary feature encoded numerically and,
+//! for each `set`-kind
 //! feature ("action class"), whether it qualifies as an explanation of the optimal actions at
 //! that row. [`dataset_from_context`] is the single path an [`crate::discovery::analyze::Analyzer`]
 //! (here, [`DatasetAnalyzer`]) or a later miner uses to build one from an
@@ -10,16 +11,16 @@
 use std::collections::{BTreeMap, HashMap};
 use std::hash::Hash;
 
-use crate::core::features::{FeatureValue, Tier};
-use crate::core::featurizer::Featurizer;
+use crate::core::features::{FeatureDef, FeatureValue, Tier};
+use crate::core::featurizer::{Featurizer, FeaturizerSpec};
 use crate::core::traits::GameDomain;
 use crate::discovery::analyze::{AnalyzeContext, AnalyzeOptions, Analyzer, AnalyzerOutput, AnnRec};
 use crate::discovery::bundle::GameBundle;
 use crate::discovery::config::CorpusError;
 use crate::discovery::evaluate::mode_name;
 use crate::io::{
-    ANNOTATE_FILE, CorpusGame, DATASET_FILE, DATASET_MANIFEST_FILE, DatasetColumn, DatasetManifest, DatasetRow, IoError,
-    SCHEMA_VERSION, read_json, write_jsonl,
+    ANNOTATE_FILE, CorpusGame, DATASET_FILE, DATASET_MANIFEST_FILE, DatasetColumn, DatasetManifest, DatasetRow, InductionParams,
+    IoError, SCHEMA_VERSION, read_json, write_jsonl,
 };
 use crate::strategy::engine::EngineGame;
 
@@ -62,7 +63,8 @@ fn tier_name(tier: Tier) -> &'static str {
 }
 
 /// Builds a [`Dataset`] from annotation `records`, using `bundle`/`featurizer` for
-/// canonicalization and feature extraction. See module docs for the row/label design.
+/// canonicalization and feature extraction, then evaluating `featurizer.vocabulary()` (native
+/// plus any derived definitions) over each extraction. See module docs for the row/label design.
 pub fn build_dataset<G: EngineGame + CorpusGame>(
     bundle: &GameBundle<G>,
     featurizer: &Featurizer<G>,
@@ -116,10 +118,14 @@ where
         optimal_positions.dedup();
 
         let native = featurizer.extract(&canonical);
+        let env = featurizer
+            .vocabulary()
+            .evaluate(&native)
+            .map_err(|e| CorpusError::Precondition(format!("evaluating derived features: {e}")))?;
 
         if rows.is_empty() {
             for def in featurizer.vocabulary().defs() {
-                let value = native
+                let value = env
                     .get(&def.name)
                     .ok_or_else(|| CorpusError::Precondition(format!("feature `{}` missing from extraction", def.name)))?;
                 let kind = value.type_name().to_string();
@@ -139,7 +145,7 @@ where
             }
         } else {
             for column in &columns {
-                let value = native
+                let value = env
                     .get(&column.name)
                     .ok_or_else(|| CorpusError::Precondition(format!("feature `{}` missing from extraction", column.name)))?;
                 let kind = value.type_name();
@@ -154,7 +160,7 @@ where
 
         let mut values: Vec<f64> = Vec::with_capacity(columns.len());
         for column in &columns {
-            let value = native.get(&column.name).expect("checked above");
+            let value = env.get(&column.name).expect("checked above");
             let encoded = match value {
                 FeatureValue::Bool(b) => {
                     if *b {
@@ -176,7 +182,7 @@ where
         let mut qualifying: Vec<String> = Vec::new();
         let mut best: Option<(usize, (i32, usize, usize))> = None; // index in qualifying, sort key
         for (vocab_index, name) in classes.iter().enumerate() {
-            let value = native.get(name).expect("class is a known column");
+            let value = env.get(name).expect("class is a known column");
             let set_value = value.as_set().expect("class column is set-kind");
             let c_legal: std::collections::BTreeSet<usize> = legal_set.intersection(set_value).copied().collect();
             if c_legal.is_empty() || !c_legal.is_subset(&optimal_set) {
@@ -269,10 +275,24 @@ where
     Ok(Dataset { manifest, rows })
 }
 
-/// Reads `annotate.json` and the context's annotations, builds a [`Featurizer`] with tier-2
-/// features included, and calls [`build_dataset`]. The single context-to-dataset path shared by
-/// [`DatasetAnalyzer`] and any later mining analyzer.
-pub fn dataset_from_context<G: EngineGame + CorpusGame>(ctx: &AnalyzeContext<'_, G>) -> Result<Dataset<G>, CorpusError>
+/// Maps `[induction]` parameters to the featurizer construction they imply: tier-2 is withheld
+/// only when induction is enabled and asks for it, and the extended tier-1 families are minted
+/// only when induction is enabled and asks for them.
+pub(crate) fn induction_spec(params: &InductionParams) -> FeaturizerSpec {
+    FeaturizerSpec {
+        include_supplied: !(params.enabled && params.withhold_tier2),
+        extended: params.enabled && params.extended_tier1,
+    }
+}
+
+/// Reads `annotate.json` and the context's annotations, builds a [`Featurizer`] per `spec`,
+/// appends `derived` definitions to it, and calls [`build_dataset`]. The single
+/// context-to-dataset path shared by [`DatasetAnalyzer`] and any later mining analyzer.
+pub fn dataset_from_context<G: EngineGame + CorpusGame>(
+    ctx: &AnalyzeContext<'_, G>,
+    spec: FeaturizerSpec,
+    derived: &[FeatureDef],
+) -> Result<Dataset<G>, CorpusError>
 where
     G::State: Clone + Eq + Hash,
 {
@@ -286,7 +306,12 @@ where
         )));
     }
     let metadata: crate::discovery::annotate::AnnotateMetadata = read_json(&annotate_path)?;
-    let featurizer = ctx.bundle.featurizer(true)?;
+    let mut featurizer = ctx.bundle.featurizer_with(spec)?;
+    for def in derived {
+        featurizer
+            .push_derived(def.clone())
+            .map_err(|e| CorpusError::Config(format!("derived feature `{}`: {e}", def.name)))?;
+    }
     build_dataset(
         ctx.bundle,
         &featurizer,
@@ -315,8 +340,8 @@ where
     fn requires_annotations(&self) -> bool {
         true
     }
-    fn run(&self, ctx: &AnalyzeContext<'_, G>, _options: &AnalyzeOptions) -> Result<AnalyzerOutput, CorpusError> {
-        let dataset = dataset_from_context(ctx)?;
+    fn run(&self, ctx: &AnalyzeContext<'_, G>, options: &AnalyzeOptions) -> Result<AnalyzerOutput, CorpusError> {
+        let dataset = dataset_from_context(ctx, induction_spec(&options.induction), &[])?;
         write_jsonl(&ctx.corpus_dir.join(DATASET_FILE), dataset.rows.iter())?;
         AnalyzerOutput::new(DATASET_MANIFEST_FILE, &dataset.manifest, true)
     }

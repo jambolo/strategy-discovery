@@ -37,7 +37,7 @@ pub struct Pairing(
 );
 
 /// A named fixed opening: an action prefix applied verbatim before strategies take over. TOML:
-/// `[[openings]]` with `name = "center"` and `actions = [4]`.
+/// `[[openings]]` with `name = "opening-a"` and `actions = [4]`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct NamedOpening<A> {
     /// Name this opening is referenced by from a sweep cell.

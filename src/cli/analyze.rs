@@ -9,62 +9,158 @@
 //! The `--mine-engine`/`--mine-depths`/`--mine-min-leaf`/`--mine-seed`/`--mine-holdout` flags
 //! compose a [`MineParams`] (each defaulting to [`MineParams::default`]), validated by
 //! [`mine_params`] before anything else runs, so a bad value always exits 2.
+//!
+//! The `--induce`/`--withhold-tier2`/`--induction-*`/`--label-map` flags compose an
+//! [`InductionParams`] (each defaulting to [`InductionParams::default`]), validated by
+//! [`induction_params`] immediately after `mine_params`, before anything else runs. Standalone
+//! `analyze` reads induction parameters only from these flags.
 
 use crate::cli::error::CliError;
 use crate::cli::games::{KNOWN_GAMES, dispatch_game, game_of_run_dir};
 use crate::discovery::analyze::{AnalyzeMetadata, AnalyzeOptions, AnalyzerOutput, analyze_outputs, builtin_registry};
 use crate::discovery::config::CorpusError;
 use crate::discovery::{CorpusSummary, DiversityThresholds, GameBundle};
-use crate::io::{CorpusGame, MineParams};
+use crate::io::{CorpusGame, InductionParams, MineParams};
 use crate::strategy::engine::EngineGame;
 use std::path::{Path, PathBuf};
 
+/// Flags for `analyze`.
+#[derive(clap::Args, Debug)]
+pub struct AnalyzeArgs {
+    /// Corpus run directory to analyze; required unless `--list-analyzers` is set.
+    #[arg(long)]
+    pub corpus: Option<PathBuf>,
+    /// Game whose analyzer registry to use; defaults to the corpus's own game, or to the
+    /// first known game when only listing analyzers.
+    #[arg(long)]
+    pub game: Option<String>,
+    /// Comma-separated analyzer names to run, in order; defaults to `summary`.
+    #[arg(long)]
+    pub analyzers: Option<String>,
+    /// Print one `name<TAB>description` line per registered analyzer and exit.
+    #[arg(long)]
+    pub list_analyzers: bool,
+    /// Minimum fraction of known canonical positions the corpus must cover.
+    #[arg(long)]
+    pub min_coverage: Option<f64>,
+    /// Minimum fraction of games that must end decisively.
+    #[arg(long)]
+    pub min_decisive: Option<f64>,
+    /// Minimum fraction of games that must have a distinct action sequence.
+    #[arg(long)]
+    pub min_distinct: Option<f64>,
+    /// Exit with status 3 when the corpus fails its diversity thresholds.
+    #[arg(long)]
+    pub strict: bool,
+    /// Induction engine for the `dataset`/`mine` analyzers; defaults to `MineParams::default`.
+    #[arg(long)]
+    pub mine_engine: Option<String>,
+    /// Comma-separated candidate depths for the `mine` analyzer; defaults to `MineParams::default`.
+    #[arg(long)]
+    pub mine_depths: Option<String>,
+    /// Minimum rows per leaf for the `mine` analyzer; defaults to `MineParams::default`.
+    #[arg(long)]
+    pub mine_min_leaf: Option<usize>,
+    /// Seed of the train/holdout shuffle for the `mine` analyzer; defaults to `MineParams::default`.
+    #[arg(long)]
+    pub mine_seed: Option<u64>,
+    /// Fraction of rows held out for evaluation by the `mine` analyzer; defaults to `MineParams::default`.
+    #[arg(long)]
+    pub mine_holdout: Option<f64>,
+    /// Enable concept induction for this run (sets `[induction] enabled = true`).
+    #[arg(long)]
+    pub induce: bool,
+    /// Withhold the game-supplied tier-2 features from the dataset; requires `--induce`.
+    #[arg(long)]
+    pub withhold_tier2: bool,
+    /// Maximum promotion rounds; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_rounds: Option<usize>,
+    /// Thresholds minted per numeric atom; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_max_thresholds: Option<usize>,
+    /// Level-1 predicates kept for combination; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_beam: Option<usize>,
+    /// Shortlist size handed to the downstream probe; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_top_k: Option<usize>,
+    /// Maximum concepts promoted per round; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_max_promoted: Option<usize>,
+    /// Minimum train information-gain to shortlist a candidate; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_min_train_gain: Option<f64>,
+    /// Minimum holdout information-gain to shortlist a candidate; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_min_holdout_gain: Option<f64>,
+    /// Fraction of induction rows held out for evaluation; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_holdout: Option<f64>,
+    /// Downstream CART probe depth limit; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_probe_depth: Option<usize>,
+    /// Allowed soundness drop when the downstream probe's rule count shrinks; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_soundness_tolerance: Option<f64>,
+    /// Required soundness rise when the downstream probe's rule count only ties; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_min_soundness_gain: Option<f64>,
+    /// Compare against raw atoms during induction; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_compare_atoms: Option<bool>,
+    /// Mint the extended mechanical tier-1 families when induction is enabled; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_extended_tier1: Option<bool>,
+    /// Seed of the induction sampling; defaults to `InductionParams::default`.
+    #[arg(long)]
+    pub induction_seed: Option<u64>,
+    /// TOML file mapping concept names to human labels, applied at render time.
+    #[arg(long)]
+    pub label_map: Option<PathBuf>,
+}
+
 /// Runs `analyze`.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn run(
-    corpus: Option<PathBuf>,
-    game: Option<String>,
-    analyzers: Option<String>,
-    list_analyzers: bool,
-    min_coverage: Option<f64>,
-    min_decisive: Option<f64>,
-    min_distinct: Option<f64>,
-    strict: bool,
-    mine_engine: Option<String>,
-    mine_depths: Option<String>,
-    mine_min_leaf: Option<usize>,
-    mine_seed: Option<u64>,
-    mine_holdout: Option<f64>,
-) -> anyhow::Result<()> {
-    let mine = mine_params(mine_engine, mine_depths, mine_min_leaf, mine_seed, mine_holdout)?;
-    if list_analyzers {
-        let game = game.unwrap_or_else(|| KNOWN_GAMES[0].to_string());
+pub(super) fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
+    let mine = mine_params(
+        args.mine_engine.clone(),
+        args.mine_depths.clone(),
+        args.mine_min_leaf,
+        args.mine_seed,
+        args.mine_holdout,
+    )?;
+    let induction = induction_params(&args)?;
+    if args.list_analyzers {
+        let game = args.game.unwrap_or_else(|| KNOWN_GAMES[0].to_string());
         return dispatch_game!(game.as_str(), |bundle| list_analyzers_for(bundle));
     }
-    let corpus = corpus.ok_or_else(|| CliError::Usage("analyze requires --corpus (or --list-analyzers)".to_string()))?;
-    let game = match game {
+    let corpus = args
+        .corpus
+        .ok_or_else(|| CliError::Usage("analyze requires --corpus (or --list-analyzers)".to_string()))?;
+    let game = match args.game {
         Some(name) => name,
         None => game_of_run_dir(&corpus)?,
     };
-    let names: Vec<String> = match analyzers {
+    let names: Vec<String> = match args.analyzers {
         Some(list) => list.split(',').map(|n| n.trim().to_string()).collect(),
         None => vec!["summary".to_string()],
     };
     let mut thresholds = DiversityThresholds::default();
-    if let Some(v) = min_coverage {
+    if let Some(v) = args.min_coverage {
         thresholds.min_canonical_coverage = v;
     }
-    if let Some(v) = min_decisive {
+    if let Some(v) = args.min_decisive {
         thresholds.min_decisive_fraction = v;
     }
-    if let Some(v) = min_distinct {
+    if let Some(v) = args.min_distinct {
         thresholds.min_distinct_game_fraction = v;
     }
     let options = AnalyzeOptions {
         analyzers: names,
         thresholds,
-        strict,
+        strict: args.strict,
         mine,
+        induction,
     };
     dispatch_game!(game.as_str(), |bundle| run_analyze(bundle, &corpus, &options).map(|_| ()))
 }
@@ -103,6 +199,67 @@ fn mine_params(
     }
     if let Some(holdout) = holdout {
         params.holdout_fraction = holdout;
+    }
+    params.validate()?;
+    Ok(params)
+}
+
+/// Composes an [`InductionParams`] from the `--induce`/`--withhold-tier2`/`--induction-*`/
+/// `--label-map` flags, starting from [`InductionParams::default`] and overriding each field
+/// given as `Some` (or set by its boolean flag). Validates the result via
+/// [`InductionParams::validate`] before returning it.
+fn induction_params(args: &AnalyzeArgs) -> Result<InductionParams, CorpusError> {
+    let mut params = InductionParams::default();
+    if args.induce {
+        params.enabled = true;
+    }
+    if args.withhold_tier2 {
+        params.withhold_tier2 = true;
+    }
+    if let Some(v) = args.induction_rounds {
+        params.rounds = v;
+    }
+    if let Some(v) = args.induction_max_thresholds {
+        params.max_thresholds = v;
+    }
+    if let Some(v) = args.induction_beam {
+        params.beam = v;
+    }
+    if let Some(v) = args.induction_top_k {
+        params.top_k = v;
+    }
+    if let Some(v) = args.induction_max_promoted {
+        params.max_promoted = v;
+    }
+    if let Some(v) = args.induction_min_train_gain {
+        params.min_train_gain = v;
+    }
+    if let Some(v) = args.induction_min_holdout_gain {
+        params.min_holdout_gain = v;
+    }
+    if let Some(v) = args.induction_holdout {
+        params.holdout_fraction = v;
+    }
+    if let Some(v) = args.induction_probe_depth {
+        params.probe_depth = v;
+    }
+    if let Some(v) = args.induction_soundness_tolerance {
+        params.soundness_tolerance = v;
+    }
+    if let Some(v) = args.induction_min_soundness_gain {
+        params.min_soundness_gain = v;
+    }
+    if let Some(v) = args.induction_compare_atoms {
+        params.compare_atoms = v;
+    }
+    if let Some(v) = args.induction_extended_tier1 {
+        params.extended_tier1 = v;
+    }
+    if let Some(v) = args.induction_seed {
+        params.seed = v;
+    }
+    if args.label_map.is_some() {
+        params.label_map = args.label_map.clone();
     }
     params.validate()?;
     Ok(params)

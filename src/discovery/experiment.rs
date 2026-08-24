@@ -25,6 +25,11 @@
 //! seed = 0                        # default 0
 //! holdout_fraction = 0.0          # default 0.0, in [0, 1)
 //!
+//! [induction]
+//! enabled = false                 # default false; concept-induction master switch
+//! withhold_tier2 = false          # default false; requires enabled = true
+//! rounds = 2                      # default 2; see InductionParams for the remaining keys
+//!
 //! [discover]
 //! games = 20                      # default 20, games per (opponent, seat) pairing
 //! seed = 0                        # default 0
@@ -77,7 +82,7 @@ use crate::discovery::corpus::GenerateOptions;
 use crate::discovery::evaluate::EvaluateConfig;
 use crate::discovery::summary::DiversityThresholds;
 use crate::discovery::tournament::default_reference;
-use crate::io::{CorpusGame, IoError, MineParams, SCHEMA_VERSION, check_schema_version};
+use crate::io::{CorpusGame, InductionParams, IoError, MineParams, SCHEMA_VERSION, check_schema_version};
 use crate::strategy::engine::EngineGame;
 use crate::strategy::roster::{Roster, RosterEntry};
 
@@ -105,6 +110,9 @@ pub struct ExperimentConfig<A> {
     /// Heuristic mining parameters shared by the `analyze` stage's rule-induction step.
     #[serde(default)]
     pub mine: MineParams,
+    /// Concept-induction parameters shared by the `analyze` stage's induction analyzers.
+    #[serde(default)]
+    pub induction: InductionParams,
     /// The `discover` stage's configuration: benchmark evaluation and archiving.
     #[serde(default)]
     pub discover: DiscoverSection,
@@ -401,6 +409,7 @@ pub fn resolve_experiment<G: EngineGame + CorpusGame>(
         return Err(CorpusError::Config("[generate] threads must be >= 1, got 0".to_string()));
     }
     config.mine.validate()?;
+    config.induction.validate()?;
 
     let GenerateSection {
         sweep: sweep_source,
@@ -446,6 +455,10 @@ pub fn resolve_experiment<G: EngineGame + CorpusGame>(
     }
 
     let mine = config.mine.clone();
+    let mut induction = config.induction.clone();
+    if let Some(path) = induction.label_map.take() {
+        induction.label_map = Some(base_dir.join(path));
+    }
     let AnnotateSection {
         enabled,
         engine_depth,
@@ -471,6 +484,7 @@ pub fn resolve_experiment<G: EngineGame + CorpusGame>(
         thresholds,
         strict,
         mine,
+        induction,
     };
 
     let section = config.discover;
@@ -898,6 +912,70 @@ max_loss_rate = 0.5
         assert_eq!(config.discover.reference, Some("perfect".to_string()));
         assert!(config.discover.strict);
         assert_eq!(config.discover.max_loss_rate, 0.5);
+    }
+
+    #[test]
+    fn parses_induction_table_and_defaults() {
+        let config = fixture();
+        assert_eq!(config.induction, InductionParams::default());
+
+        let text = r#"
+schema_version = 1
+name = "n"
+game = "tictactoe"
+out = "runs/n"
+
+[generate]
+sweep = "x.toml"
+
+[induction]
+enabled = true
+withhold_tier2 = true
+rounds = 3
+"#;
+        let config = ExperimentConfig::<Move>::from_toml_str(text).unwrap();
+        assert!(config.induction.enabled);
+        assert!(config.induction.withhold_tier2);
+        assert_eq!(config.induction.rounds, 3);
+        assert_eq!(
+            config.induction,
+            InductionParams {
+                enabled: true,
+                withhold_tier2: true,
+                rounds: 3,
+                ..InductionParams::default()
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_invalid_induction() {
+        let bundle = game_bundle();
+        let registry = registry_with_agreement();
+        let config = mutated(|c| c.induction.withhold_tier2 = true);
+
+        match resolve_experiment(config, Path::new("tests/fixtures"), &bundle, &registry, None) {
+            Err(CorpusError::Config(msg)) => {
+                assert!(msg.contains("withhold_tier2 requires enabled = true"), "got {msg:?}")
+            }
+            other => panic!("expected Err(Config(_)), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolves_induction_into_analyze_options() {
+        let bundle = game_bundle();
+        let registry = registry_with_agreement();
+        let base_dir = Path::new("tests/fixtures");
+        let config = mutated(|c| {
+            c.induction.enabled = true;
+            c.induction.label_map = Some(PathBuf::from("labels.toml"));
+        });
+
+        let resolved = resolve_experiment::<TicTacToe>(config, base_dir, &bundle, &registry, None).unwrap();
+
+        assert!(resolved.analyze.induction.enabled);
+        assert_eq!(resolved.analyze.induction.label_map, Some(base_dir.join("labels.toml")));
     }
 
     #[test]

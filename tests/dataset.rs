@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use strategy_discovery::core::features::Tier;
+use strategy_discovery::core::features::{CmpOp, FeatureDef, FeatureExpr, Tier};
 use strategy_discovery::discovery::annotate::{AnnotateOptions, annotate_corpus, annotate_exhaustive};
 use strategy_discovery::discovery::config::GenerateConfig;
 use strategy_discovery::discovery::corpus::{GenerateOptions, generate};
@@ -152,6 +152,75 @@ fn corpus_mode_dataset_matches_annotations() {
             row.optimal.iter().all(|p| legal_set.contains(p)),
             "optimal must be a subset of legal"
         );
+    }
+}
+
+#[test]
+fn dataset_evaluates_pushed_derived_defs() {
+    let bundle = game_bundle();
+    let dir = exhaustive_dir();
+    let annotations = load_annotations(&bundle, dir).unwrap();
+    let records = &annotations.records;
+
+    let baseline_featurizer = bundle.featurizer(true).unwrap();
+    let baseline = build_dataset(
+        &bundle,
+        &baseline_featurizer,
+        records,
+        DatasetSource {
+            run_id: None,
+            annotations_mode: "exhaustive".to_string(),
+        },
+    )
+    .unwrap();
+
+    let mut featurizer = bundle.featurizer(true).unwrap();
+    featurizer
+        .push_derived(FeatureDef::derived(
+            "derived.can_win",
+            Tier::Invented,
+            "a winning move exists",
+            FeatureExpr::compare(
+                CmpOp::Gt,
+                FeatureExpr::count(FeatureExpr::named("ttt.winning_cells")),
+                FeatureExpr::int(0),
+            ),
+        ))
+        .unwrap();
+
+    let dataset = build_dataset(
+        &bundle,
+        &featurizer,
+        records,
+        DatasetSource {
+            run_id: None,
+            annotations_mode: "exhaustive".to_string(),
+        },
+    )
+    .unwrap();
+    let manifest = &dataset.manifest;
+
+    assert_eq!(manifest.columns.len(), 71);
+    let last = manifest.columns.last().unwrap();
+    assert_eq!(last.name, "derived.can_win");
+    assert_eq!(last.kind, "bool");
+    assert_eq!(last.tier, Tier::Invented);
+    assert_eq!(last.description, "a winning move exists");
+    assert_eq!(
+        manifest.tiers,
+        vec!["primitive".to_string(), "supplied".to_string(), "invented".to_string()]
+    );
+    assert_eq!(manifest.classes, baseline.manifest.classes);
+    assert_eq!(manifest.rows, baseline.manifest.rows);
+
+    let w = dataset.column_index("ttt.winning_cells").unwrap();
+    for (row, base_row) in dataset.rows.iter().zip(&baseline.rows) {
+        assert_eq!(row.values.len(), 71);
+        assert_eq!(&row.values[..70], &base_row.values[..]);
+        let expected = if row.values[w] > 0.0 { 1.0 } else { 0.0 };
+        assert_eq!(row.values[70], expected);
+        assert_eq!(row.label, base_row.label);
+        assert_eq!(row.qualifying, base_row.qualifying);
     }
 }
 

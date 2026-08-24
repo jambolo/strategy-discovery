@@ -30,11 +30,11 @@ fn lists_registered_analyzers() {
     assert_eq!(code, 0);
 
     let lines: Vec<&str> = stdout.lines().filter(|l| !l.is_empty()).collect();
-    assert_eq!(lines.len(), 4, "stdout: {stdout}");
+    assert_eq!(lines.len(), 6, "stdout: {stdout}");
     for line in &lines {
         assert!(line.contains('\t'), "line missing tab: {line}");
     }
-    for name in ["agreement", "dataset", "mine", "summary"] {
+    for name in ["agreement", "concepts", "dataset", "mine", "summary", "vocabulary"] {
         let matches: Vec<&&str> = lines.iter().filter(|l| l.starts_with(&format!("{name}\t"))).collect();
         assert_eq!(matches.len(), 1, "expected exactly one `{name}` line, stdout: {stdout}");
     }
@@ -82,6 +82,34 @@ fn analyze_without_corpus_is_rejected() {
     let (code, _stdout, stderr) = cli(&["analyze"]);
     assert_eq!(code, 2);
     assert!(stderr.contains("--corpus"), "stderr: {stderr}");
+}
+
+#[test]
+fn induction_flags_are_validated() {
+    let (code, _stdout, stderr) = cli(&["analyze", "--induction-rounds", "0"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("[induction] rounds"), "stderr: {stderr}");
+
+    let (code, _stdout, stderr) = cli(&["analyze", "--withhold-tier2"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("withhold_tier2 requires enabled = true"), "stderr: {stderr}");
+
+    let (code, _stdout, stderr) = cli(&["analyze", "--induction-holdout", "1.5"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("holdout_fraction"), "stderr: {stderr}");
+}
+
+#[test]
+fn concepts_analyzer_requires_induce() {
+    let dir = out_dir("concepts_requires_induce");
+    let dir_str = dir.to_str().expect("temp path is utf-8");
+
+    let (code, _stdout, _stderr) = cli(&["generate", "--config", "tests/fixtures/generate-small.toml", "--out", dir_str]);
+    assert_eq!(code, 0);
+
+    let (code, _stdout, stderr) = cli(&["analyze", "--corpus", dir_str, "--analyzers", "concepts"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("requires [induction] enabled = true"), "stderr: {stderr}");
 }
 
 #[test]

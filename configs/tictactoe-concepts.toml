@@ -1,0 +1,62 @@
+# Full-scale concept-induction experiment: generate the tictactoe-discover corpus,
+# withhold the hand-supplied tier-2 features, induce and promote tier-3 concepts,
+# mine heuristics over the augmented vocabulary, and benchmark-evaluate them.
+# `discover --out DIR` overrides `out`; Milestone 3 phase 4 tunes [induction]/[mine].
+schema_version = 1
+name = "tictactoe-concepts"
+game = "tictactoe"
+out = "../runs/tictactoe-concepts"
+
+[generate.sweep]
+schema_version = 1
+game = "tictactoe"
+seed = 20260823
+games_per_cell = 40
+evaluators = ["default"]
+random_opening_plies = [0, 1, 2]
+
+[[generate.sweep.strategies]]
+name = "random"
+[generate.sweep.strategies.spec]
+kind = "random"
+
+[[generate.sweep.strategies]]
+name = "depth-2"
+[generate.sweep.strategies.spec]
+kind = "minimax"
+depth = 2
+
+[[generate.sweep.strategies]]
+name = "depth-4"
+[generate.sweep.strategies.spec]
+kind = "minimax"
+depth = 4
+
+[[generate.sweep.strategies]]
+name = "perfect"
+[generate.sweep.strategies.spec]
+kind = "minimax"
+depth = 9
+
+[annotate]
+enabled = true
+
+[analyze]
+analyzers = ["summary", "agreement", "dataset", "concepts", "mine", "vocabulary"]
+
+[mine]
+engine = "cart"
+depths = [6, 8, 12, 0]
+min_leaf = 1
+
+[induction]
+enabled = true
+withhold_tier2 = true
+rounds = 2
+
+[discover]
+games = 20
+seed = 0
+
+[report]
+out = "report.md"

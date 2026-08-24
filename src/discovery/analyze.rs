@@ -5,9 +5,11 @@
 //! document plus a pass/fail verdict. [`AnalyzerRegistry`] is the game-agnostic set of analyzers
 //! available for a game; [`builtin_registry`] wires up the analyzers this crate ships:
 //! [`crate::discovery::agreement::AgreementAnalyzer`] (`"agreement"`),
+//! [`crate::discovery::induce::ConceptsAnalyzer`] (`"concepts"`),
 //! [`crate::discovery::dataset::DatasetAnalyzer`] (`"dataset"`),
-//! [`crate::discovery::mine::MineAnalyzer`] (`"mine"`), and
-//! [`crate::discovery::summary::SummaryAnalyzer`] (`"summary"`).
+//! [`crate::discovery::mine::MineAnalyzer`] (`"mine"`),
+//! [`crate::discovery::summary::SummaryAnalyzer`] (`"summary"`), and
+//! [`crate::discovery::vocabulary::VocabularyAnalyzer`] (`"vocabulary"`).
 //! [`analyze_outputs`] (and its thin wrapper [`analyze`]) validate the requested analyzer names,
 //! run each requested analyzer in the given order, write its output file into the corpus
 //! directory, and write `analyze.json` (an [`AnalyzeMetadata`] manifest) alongside them.
@@ -32,8 +34,8 @@ use crate::discovery::config::CorpusError;
 use crate::discovery::summary::DiversityThresholds;
 use crate::io::schema::ANALYZE_FILE;
 use crate::io::{
-    ANNOTATIONS_FILE, AnnotationRecord, CorpusGame, GAMES_FILE, GameRecord, IoError, MineParams, POSITIONS_FILE, PositionRecord,
-    RUN_FILE, SCHEMA_VERSION, check_schema_version, read_json, read_jsonl, write_json_pretty,
+    ANNOTATIONS_FILE, AnnotationRecord, CorpusGame, GAMES_FILE, GameRecord, InductionParams, IoError, MineParams, POSITIONS_FILE,
+    PositionRecord, RUN_FILE, SCHEMA_VERSION, check_schema_version, read_json, read_jsonl, write_json_pretty,
 };
 use crate::strategy::engine::EngineGame;
 
@@ -59,6 +61,8 @@ pub struct AnalyzeOptions {
     pub strict: bool,
     /// Miner parameters consumed by the `dataset`/`mine` analyzers.
     pub mine: MineParams,
+    /// Concept-induction parameters consumed by induction-aware analyzers.
+    pub induction: InductionParams,
 }
 
 impl Default for AnalyzeOptions {
@@ -68,6 +72,7 @@ impl Default for AnalyzeOptions {
             thresholds: DiversityThresholds::default(),
             strict: false,
             mine: MineParams::default(),
+            induction: InductionParams::default(),
         }
     }
 }
@@ -301,16 +306,20 @@ impl<G: EngineGame + CorpusGame> Default for AnalyzerRegistry<G> {
     }
 }
 
-/// The analyzers this crate ships, registered under their default names: `agreement`
-/// (`crate::discovery::agreement`), `dataset` (`crate::discovery::dataset`), `mine`
-/// (`crate::discovery::mine`), and
-/// [`SummaryAnalyzer`](crate::discovery::summary::SummaryAnalyzer) as `"summary"`.
+/// The analyzers this crate ships, registered under their default names, alphabetically:
+/// `agreement` (`crate::discovery::agreement`), `concepts`
+/// (`crate::discovery::induce::ConceptsAnalyzer`), `dataset` (`crate::discovery::dataset`),
+/// `mine` (`crate::discovery::mine`), `summary`
+/// ([`SummaryAnalyzer`](crate::discovery::summary::SummaryAnalyzer)), and `vocabulary`
+/// (`crate::discovery::vocabulary::VocabularyAnalyzer`).
 pub fn builtin_registry<G: EngineGame + CorpusGame>() -> AnalyzerRegistry<G> {
     let mut registry = AnalyzerRegistry::new();
     registry.register(Arc::new(crate::discovery::agreement::AgreementAnalyzer));
+    registry.register(Arc::new(crate::discovery::induce::ConceptsAnalyzer));
     registry.register(Arc::new(crate::discovery::dataset::DatasetAnalyzer));
     registry.register(Arc::new(crate::discovery::mine::MineAnalyzer));
     registry.register(Arc::new(crate::discovery::summary::SummaryAnalyzer));
+    registry.register(Arc::new(crate::discovery::vocabulary::VocabularyAnalyzer));
     registry
 }
 
@@ -529,7 +538,7 @@ depth = 1
     fn builtin_registry_names() {
         assert_eq!(
             builtin_registry::<TicTacToe>().names(),
-            vec!["agreement", "dataset", "mine", "summary"]
+            vec!["agreement", "concepts", "dataset", "mine", "summary", "vocabulary"]
         );
     }
 
@@ -537,6 +546,11 @@ depth = 1
     fn analyze_options_default_includes_mine() {
         assert_eq!(AnalyzeOptions::default().mine, MineParams::default());
         assert_eq!(AnalyzeOptions::default().analyzers, vec!["summary".to_string()]);
+    }
+
+    #[test]
+    fn analyze_options_default_includes_induction() {
+        assert_eq!(AnalyzeOptions::default().induction, InductionParams::default());
     }
 
     #[test]

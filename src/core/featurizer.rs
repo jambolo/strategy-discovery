@@ -11,6 +11,28 @@ use std::sync::Arc;
 /// Name of the featurizer's own feature: index of the player to move in turn order.
 pub const SIDE_TO_MOVE: &str = "side_to_move";
 
+/// Construction options for a [`Featurizer`]: whether the game-supplied tier-2
+/// extractor is included and whether the extended mechanical tier-1 families are
+/// minted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FeaturizerSpec {
+    /// Include the game-supplied tier-2 extractor, when the game has one.
+    pub include_supplied: bool,
+    /// Mint the extended mechanical tier-1 families (line-signature counts and
+    /// cell-membership sets).
+    pub extended: bool,
+}
+
+impl FeaturizerSpec {
+    /// The pre-extension behavior: supplied features included, no extended families.
+    pub fn base() -> Self {
+        FeaturizerSpec {
+            include_supplied: true,
+            extended: false,
+        }
+    }
+}
+
 /// Turns a state into its feature environment: tier-1 primitives (built mechanically) plus an
 /// optional game-supplied extractor, behind one vocabulary, with canonical-frame helpers.
 pub struct Featurizer<G: GameDomain> {
@@ -33,9 +55,29 @@ impl<G: GameDomain> Featurizer<G> {
         players: Vec<G::Player>,
         supplied: Option<Arc<dyn FeatureExtractor<G>>>,
     ) -> Result<Self, FeatureError> {
-        let mut extractors: Vec<Arc<dyn FeatureExtractor<G>>> =
-            vec![Arc::new(PrimitiveFeatures::new(rules.clone(), primitives.clone()))];
-        if let Some(supplied) = supplied {
+        Self::with_spec(rules, primitives, canonicalizer, players, supplied, FeaturizerSpec::base())
+    }
+
+    /// Builds a featurizer per `spec`: the tier-1 extractor is the extended mechanical
+    /// set when `spec.extended`, else the base set; `supplied`, if given, is appended
+    /// after it only when `spec.include_supplied`. Fails if any two feature names
+    /// collide (including `side_to_move` itself).
+    pub fn with_spec(
+        rules: Arc<dyn GameRules<G>>,
+        primitives: Arc<dyn GamePrimitives<G>>,
+        canonicalizer: Option<Arc<dyn Canonicalize<G>>>,
+        players: Vec<G::Player>,
+        supplied: Option<Arc<dyn FeatureExtractor<G>>>,
+        spec: FeaturizerSpec,
+    ) -> Result<Self, FeatureError> {
+        let mut extractors: Vec<Arc<dyn FeatureExtractor<G>>> = vec![if spec.extended {
+            Arc::new(PrimitiveFeatures::extended(rules.clone(), primitives.clone()))
+        } else {
+            Arc::new(PrimitiveFeatures::new(rules.clone(), primitives.clone()))
+        }];
+        if spec.include_supplied
+            && let Some(supplied) = supplied
+        {
             extractors.push(supplied);
         }
 
@@ -127,11 +169,23 @@ impl<G: GameDomain> Featurizer<G> {
             .map(|a| self.primitives.action_position(a).map(|p| perm.apply(p)))
             .collect()
     }
+
+    /// Appends a derived (expression-backed) definition to the vocabulary. Callers
+    /// must pass a derived definition ([`FeatureDef::is_native`] is `false`); native
+    /// definitions are the extractors' to declare. [`Featurizer::extract`] stays
+    /// native-only — consumers evaluate derived definitions through
+    /// [`FeatureVocabulary::evaluate`]. Fails as the vocabulary push fails: a
+    /// duplicate name, or a reference to a name not yet defined.
+    pub fn push_derived(&mut self, def: FeatureDef) -> Result<(), FeatureError> {
+        debug_assert!(!def.is_native(), "push_derived requires a derived definition");
+        self.vocabulary.push(def)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::features::{CmpOp, FeatureExpr};
     use crate::core::symmetry::SymmetryGroup;
     use crate::core::traits::RulesError;
 
@@ -419,5 +473,118 @@ mod tests {
     fn action_positions_none_without_positions() {
         let f = Featurizer::<Ring>::new(Arc::new(RingRules), Arc::new(NoPositions), None, vec![0, 1], None).unwrap();
         assert_eq!(f.action_positions(&[0], &Permutation::identity(4)), None);
+    }
+
+    fn with_spec(supplied: bool, spec: FeaturizerSpec) -> Featurizer<Ring> {
+        let supplied: Option<Arc<dyn FeatureExtractor<Ring>>> = if supplied { Some(Arc::new(RingSupplied)) } else { None };
+        Featurizer::<Ring>::with_spec(
+            Arc::new(RingRules),
+            Arc::new(RingPrimitives),
+            None,
+            vec![0, 1],
+            supplied,
+            spec,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn with_spec_extended_and_supplied_matrix() {
+        let base = with_spec(true, FeaturizerSpec::base());
+        assert_eq!(base.vocabulary().len(), 25);
+        assert!(
+            base.vocabulary()
+                .defs()
+                .iter()
+                .all(|d| !d.name.starts_with("lines.") && !d.name.starts_with("cells."))
+        );
+        let base_names: Vec<&str> = base.vocabulary().defs().iter().map(|d| d.name.as_str()).collect();
+        let new = featurizer(true, false);
+        let new_names: Vec<&str> = new.vocabulary().defs().iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(base_names, new_names);
+
+        let no_supplied = with_spec(
+            true,
+            FeaturizerSpec {
+                include_supplied: false,
+                extended: false,
+            },
+        );
+        assert_eq!(no_supplied.vocabulary().len(), 24);
+
+        let extended_and_supplied = with_spec(
+            true,
+            FeaturizerSpec {
+                include_supplied: true,
+                extended: true,
+            },
+        );
+        assert_eq!(extended_and_supplied.vocabulary().len(), 37);
+        assert!(extended_and_supplied.vocabulary().get("lines.mine2.theirs0").is_some());
+        assert!(extended_and_supplied.vocabulary().get("cells.mine1.theirs0.ge2").is_some());
+        assert_eq!(extended_and_supplied.vocabulary().defs().last().unwrap().name, "ring.filled");
+
+        let extended_only = with_spec(
+            true,
+            FeaturizerSpec {
+                include_supplied: false,
+                extended: true,
+            },
+        );
+        assert_eq!(extended_only.vocabulary().len(), 36);
+    }
+
+    #[test]
+    fn with_spec_extended_extract_covers_vocabulary() {
+        let f = with_spec(
+            true,
+            FeaturizerSpec {
+                include_supplied: true,
+                extended: true,
+            },
+        );
+        let values = f.extract(&RingRules.initial_state());
+        assert_eq!(values.len(), 37);
+        let value_names: std::collections::BTreeSet<&str> = values.iter().map(|(n, _)| n.as_str()).collect();
+        let vocab_names: std::collections::BTreeSet<&str> = f.vocabulary().defs().iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(value_names, vocab_names);
+    }
+
+    #[test]
+    fn push_derived_appends_and_errors() {
+        let mut f = featurizer(true, false);
+        f.push_derived(FeatureDef::derived(
+            "ring.pair",
+            Tier::Invented,
+            "at least two cells are free",
+            FeatureExpr::compare(CmpOp::Gt, FeatureExpr::count(FeatureExpr::named("free")), FeatureExpr::int(1)),
+        ))
+        .unwrap();
+        assert_eq!(f.vocabulary().len(), 26);
+        let last = f.vocabulary().defs().last().unwrap();
+        assert_eq!(last.name, "ring.pair");
+        assert!(!last.is_native());
+
+        let initial = RingRules.initial_state();
+        let native = f.extract(&initial);
+        assert!(native.get("ring.pair").is_none());
+        let evaluated = f.vocabulary().evaluate(&native).unwrap();
+        assert_eq!(evaluated.get("ring.pair"), Some(&FeatureValue::Bool(true)));
+
+        let dup = f.push_derived(FeatureDef::derived(
+            "ring.pair",
+            Tier::Invented,
+            "duplicate",
+            FeatureExpr::compare(CmpOp::Gt, FeatureExpr::count(FeatureExpr::named("free")), FeatureExpr::int(1)),
+        ));
+        assert_eq!(dup, Err(FeatureError::Duplicate("ring.pair".to_string())));
+
+        let unknown = f.push_derived(FeatureDef::derived(
+            "ring.nope",
+            Tier::Invented,
+            "references an undefined name",
+            FeatureExpr::compare(CmpOp::Gt, FeatureExpr::count(FeatureExpr::named("nope")), FeatureExpr::int(1)),
+        ));
+        assert!(matches!(unknown, Err(FeatureError::Unknown(_))));
     }
 }

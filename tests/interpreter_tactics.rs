@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use strategy_discovery::core::dsl::{ActionSelector, HeuristicStrategy, Rule};
 use strategy_discovery::core::features::{CmpOp, FeatureDef, FeatureExpr, Tier};
-use strategy_discovery::core::featurizer::Featurizer;
+use strategy_discovery::core::featurizer::{Featurizer, FeaturizerSpec};
 use strategy_discovery::core::interpreter::{RuleInterpreter, RuleInterpreterProvider};
 use strategy_discovery::core::traits::{GameRules, MatchConfig, MatchEngine, Strategy, StrategyProvider};
 use strategy_discovery::discovery::RayonMatchEngine;
@@ -15,6 +15,45 @@ use strategy_discovery::strategy::{MinimaxConfig, RandomProvider, StrategyRegist
 /// The tic-tac-toe featurizer, natives + supplied vocabulary included.
 fn featurizer() -> Arc<Featurizer<TicTacToe>> {
     Arc::new(game_bundle().featurizer(true).unwrap())
+}
+
+/// The tic-tac-toe featurizer with extended tier-1 natives included.
+fn extended_featurizer() -> Arc<Featurizer<TicTacToe>> {
+    Arc::new(
+        game_bundle()
+            .featurizer_with(FeaturizerSpec {
+                include_supplied: true,
+                extended: true,
+            })
+            .unwrap(),
+    )
+}
+
+/// Take-win heuristic expressed purely over extended tier-1 natives.
+fn extended_win() -> HeuristicStrategy {
+    let mut h = HeuristicStrategy::new("extended-win");
+    h.define(FeatureDef::native(
+        "lines.mine2.theirs0",
+        Tier::Primitive,
+        "lines with two mover positions and none of the opponent's",
+    ))
+    .unwrap();
+    h.define(FeatureDef::native(
+        "cells.mine2.theirs0.ge1",
+        Tier::Primitive,
+        "empty positions completing such a line",
+    ))
+    .unwrap();
+    h.push_rule(Rule::new(
+        "win",
+        1,
+        FeatureExpr::compare(CmpOp::Gt, FeatureExpr::named("lines.mine2.theirs0"), FeatureExpr::int(0)),
+        ActionSelector::TargetIn {
+            expr: FeatureExpr::named("cells.mine2.theirs0.ge1"),
+        },
+    ));
+    h.validate().unwrap();
+    h
 }
 
 /// Win-then-block heuristic: take an immediate winning cell, else block an opponent threat.
@@ -193,6 +232,45 @@ fn plays_through_match_engine_vs_random_and_perfect() {
     let records = engine.run(&config, players).unwrap();
     assert_eq!(records.len(), 2);
     assert!(records.iter().all(|r| r.outcome.is_some()));
+}
+
+#[test]
+fn plays_heuristic_over_extended_natives() {
+    use strategy_discovery::games::tictactoe::Player;
+
+    let board = Board::parse("XX.O.O...").unwrap();
+    let legal = TicTacToeRules.legal_actions(&board);
+    let mut interpreter = RuleInterpreter::<TicTacToe>::new(extended_win(), extended_featurizer(), 0).unwrap();
+    let chosen = interpreter.choose(&board, &legal).unwrap();
+    assert_eq!(chosen.0, 2);
+
+    let registry = StrategyRegistry::new(engine_bundle());
+    let provider = registry
+        .build(&StrategySpec::HeuristicRules {
+            heuristic: extended_win(),
+        })
+        .unwrap();
+    let random = RandomProvider::<TicTacToe>::new();
+    let engine = RayonMatchEngine::new(engine_bundle().rules);
+    let players: &[(Player, &dyn StrategyProvider<TicTacToe>)] = &[(Player::X, provider.as_ref()), (Player::O, &random)];
+    let config = MatchConfig {
+        games: 2,
+        seed: 9,
+        max_plies: None,
+    };
+    let records = engine.run(&config, players).unwrap();
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|r| r.outcome.is_some()));
+
+    match RuleInterpreterProvider::<TicTacToe>::new(extended_win(), featurizer()) {
+        Err(strategy_discovery::core::dsl::DslError::UnavailableFeatures(v)) => {
+            assert_eq!(v.len(), 2);
+            assert!(v.contains(&"lines.mine2.theirs0".to_string()));
+            assert!(v.contains(&"cells.mine2.theirs0.ge1".to_string()));
+        }
+        Err(other) => panic!("expected UnavailableFeatures, got {other:?}"),
+        Ok(_) => panic!("expected UnavailableFeatures, got Ok"),
+    }
 }
 
 #[test]

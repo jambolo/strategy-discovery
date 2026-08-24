@@ -5,7 +5,9 @@
 //! `heuristics.json`, evaluates every mined candidate against the benchmark roster, archives
 //! each evaluated candidate with rerun-sufficient discovery provenance, and writes a
 //! `discover.json` manifest into the run directory. It never reads `dataset.jsonl` or
-//! re-derives the dataset: candidates come only from the mining report.
+//! re-derives the dataset: candidates come only from the mining report. When
+//! `[induction] enabled` was set for the run, each candidate's discovery provenance also
+//! records the induction outcome (read back from `concepts.json`) via [`ConceptsProvenance`].
 //!
 //! This module never prints to stdout; the CLI layer reports on [`DiscoverOutcome`].
 
@@ -18,9 +20,9 @@ use crate::discovery::config::CorpusError;
 use crate::discovery::evaluate::{evaluate_strategies, load_annotations, mode_name};
 use crate::discovery::experiment::ResolvedExperiment;
 use crate::io::{
-    CandidateParams, CorpusGame, DISCOVER_FILE, DiscoverCandidate, DiscoverManifest, DiscoveryProvenance, EVALUATION_FILE,
-    EvaluationReport, HEURISTICS_FILE, MINE_ENGINE_CART, MINE_ENGINE_LINFA_TREES, MiningReport, Provenance, RUN_FILE,
-    SCHEMA_VERSION, read_json, write_json_pretty,
+    CONCEPTS_FILE, CandidateParams, ConceptReport, ConceptsProvenance, CorpusGame, DISCOVER_FILE, DiscoverCandidate,
+    DiscoverManifest, DiscoveryProvenance, EVALUATION_FILE, EvaluationReport, HEURISTICS_FILE, MINE_ENGINE_CART,
+    MINE_ENGINE_LINFA_TREES, MiningReport, Provenance, RUN_FILE, SCHEMA_VERSION, config_hash, read_json, write_json_pretty,
 };
 use crate::strategy::engine::EngineGame;
 use crate::strategy::registry::StrategySpec;
@@ -49,6 +51,14 @@ pub fn run_discover<G: EngineGame + CorpusGame>(
 ) -> Result<DiscoverOutcome, CorpusError> {
     let header: RunHeader = read_json(&resolved.out.join(RUN_FILE))?;
     let mining: MiningReport = read_json(&resolved.out.join(HEURISTICS_FILE))?;
+
+    let concepts_path = resolved.out.join(CONCEPTS_FILE);
+    let concepts = if resolved.analyze.induction.enabled && concepts_path.exists() {
+        let report: ConceptReport = read_json(&concepts_path)?;
+        Some(concepts_provenance(&report)?)
+    } else {
+        None
+    };
 
     let strategies: Vec<RosterEntry> = mining
         .candidates
@@ -105,6 +115,7 @@ pub fn run_discover<G: EngineGame + CorpusGame>(
                 tiers: mining.dataset.tiers.clone(),
                 dataset_rows: mining.dataset.rows,
                 candidate: candidate.name.clone(),
+                concepts: concepts.clone(),
             }),
         };
 
@@ -150,6 +161,19 @@ pub fn run_discover<G: EngineGame + CorpusGame>(
         report,
         manifest,
         novelties,
+    })
+}
+
+/// Maps a `concepts` analyzer's [`ConceptReport`] to the rerun-sufficient
+/// [`ConceptsProvenance`] recorded on every archived candidate when induction ran.
+fn concepts_provenance(report: &ConceptReport) -> Result<ConceptsProvenance, CorpusError> {
+    Ok(ConceptsProvenance {
+        params_hash: config_hash(&report.params)?,
+        withhold_tier2: report.params.withhold_tier2,
+        rounds_run: report.rounds.len(),
+        promoted: report.promoted.len(),
+        concepts: report.promoted.iter().map(|p| p.name.clone()).collect(),
+        seed: report.params.seed,
     })
 }
 
@@ -202,5 +226,48 @@ mod tests {
         let out = Path::new("runs/x");
         let archive_dir = Path::new("C:/elsewhere/archive");
         assert_eq!(archive_display(archive_dir, out), archive_dir.display().to_string());
+    }
+
+    #[test]
+    fn concepts_provenance_maps_report_fields() {
+        use crate::io::InductionParams;
+        use std::collections::BTreeMap;
+
+        let report = ConceptReport {
+            schema_version: 1,
+            game: "g".to_string(),
+            run_id: None,
+            params: InductionParams {
+                withhold_tier2: true,
+                seed: 7,
+                ..InductionParams::default()
+            },
+            withheld: vec![],
+            rows: 0,
+            train_rows: 0,
+            holdout_rows: 0,
+            base_columns: 0,
+            base_classes: 0,
+            rounds: vec![crate::io::RoundReport {
+                round: 1,
+                columns: 0,
+                enumerated: 0,
+                deduplicated: 0,
+                scored: 5,
+                passed: 0,
+                shortlisted: vec![],
+                promoted: vec![],
+            }],
+            promoted: vec![],
+            labels: BTreeMap::new(),
+        };
+
+        let provenance = concepts_provenance(&report).expect("maps cleanly");
+        assert_eq!(provenance.params_hash.len(), 16);
+        assert!(provenance.withhold_tier2);
+        assert_eq!(provenance.rounds_run, 1);
+        assert_eq!(provenance.promoted, 0);
+        assert!(provenance.concepts.is_empty());
+        assert_eq!(provenance.seed, 7);
     }
 }

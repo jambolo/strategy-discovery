@@ -43,10 +43,12 @@ pub fn game_bundle() -> GameBundle<TicTacToe> {
 mod tests {
     use super::*;
     use crate::core::derived::PrimitiveFeatures;
+    use crate::core::featurizer::FeaturizerSpec;
     use crate::core::symmetry::Permutation;
-    use crate::core::traits::FeatureExtractor;
+    use crate::core::traits::{FeatureExtractor, GameRules};
     use crate::discovery::config::CorpusError;
     use crate::games::tictactoe::Board;
+    use std::collections::HashSet;
 
     #[test]
     fn game_bundle_facts() {
@@ -153,6 +155,83 @@ mod tests {
         let vocabulary = vocabulary_owner.vocabulary();
         assert_eq!(vocabulary.len(), 48);
         assert!(vocabulary.defs().iter().all(|d| !d.name.starts_with("ttt.")));
+    }
+
+    #[test]
+    fn featurizer_with_extended_counts() {
+        let f = game_bundle()
+            .featurizer_with(FeaturizerSpec {
+                include_supplied: true,
+                extended: true,
+            })
+            .unwrap();
+        let names: Vec<String> = f.vocabulary().defs().iter().map(|d| d.name.clone()).collect();
+
+        assert_eq!(names.len(), 104);
+        assert_eq!(names[0], "side_to_move");
+
+        let tier1_names: Vec<String> = PrimitiveFeatures::new(TicTacToeRules, TicTacToePrimitives)
+            .definitions()
+            .iter()
+            .map(|d| d.name.clone())
+            .collect();
+        assert_eq!(names[1..48], tier1_names[..]);
+
+        assert_eq!(names[48], "lines.mine0.theirs0");
+        assert_eq!(names[57], "lines.mine3.theirs0");
+        assert_eq!(names[58], "cells.mine0.theirs0.ge1");
+        assert_eq!(names[81], "cells.mine2.theirs0.ge4");
+
+        assert_eq!(names[82..].len(), 22);
+        for name in &names[82..] {
+            assert!(name.starts_with("ttt."), "unexpected supplied name: {name}");
+        }
+
+        let without_supplied = game_bundle()
+            .featurizer_with(FeaturizerSpec {
+                include_supplied: false,
+                extended: true,
+            })
+            .unwrap();
+        let names_no_supplied: Vec<String> = without_supplied.vocabulary().defs().iter().map(|d| d.name.clone()).collect();
+        assert_eq!(names_no_supplied.len(), 82);
+        assert!(names_no_supplied.iter().all(|n| !n.starts_with("ttt.")));
+    }
+
+    #[test]
+    fn extended_tier1_matches_supplied_extensionally() {
+        let f = game_bundle()
+            .featurizer_with(FeaturizerSpec {
+                include_supplied: true,
+                extended: true,
+            })
+            .unwrap();
+        let rules = TicTacToeRules;
+
+        let mut seen: HashSet<Board> = HashSet::new();
+        let mut stack: Vec<Board> = vec![Board::empty()];
+        seen.insert(Board::empty());
+
+        while let Some(state) = stack.pop() {
+            if rules.outcome(&state).is_some() {
+                continue;
+            }
+            let v = f.extract(&state);
+            assert_eq!(v.get("lines.mine2.theirs0"), v.get("ttt.threats.mine"));
+            assert_eq!(v.get("lines.mine0.theirs2"), v.get("ttt.threats.theirs"));
+            assert_eq!(v.get("cells.mine2.theirs0.ge1"), v.get("ttt.winning_cells"));
+            assert_eq!(v.get("cells.mine0.theirs2.ge1"), v.get("ttt.blocking_cells"));
+            assert_eq!(v.get("cells.mine1.theirs0.ge2"), v.get("ttt.fork_cells"));
+
+            for action in rules.legal_actions(&state) {
+                let next = rules.apply(&state, &action).unwrap();
+                if seen.insert(next) {
+                    stack.push(next);
+                }
+            }
+        }
+
+        assert_eq!(seen.len(), 5478);
     }
 
     #[test]

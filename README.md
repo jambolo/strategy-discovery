@@ -166,9 +166,11 @@ cargo run -- analyze --list-analyzers
 
 ```text
 agreement	engine-agreement rates of played actions, by strategy and ply (agreement.json)
+concepts	induces and promotes tier-3 concepts from the feature dataset
 dataset	canonicalized per-position feature dataset for rule mining
 mine	induces ordered heuristic rule lists from the feature dataset
 summary	outcome distributions and corpus-diversity metrics (summary.json)
+vocabulary	reports given-versus-discovered feature usage of mined heuristics
 ```
 
 Flags:
@@ -179,12 +181,18 @@ Flags:
 - `--min-coverage`, `--min-decisive`, `--min-distinct` override the default diversity thresholds (0.5 / 0.2 / 0.5)
 - `--strict` exits 3 when the corpus fails its diversity thresholds, listing the failures on stderr
 - `--mine-engine NAME`, `--mine-depths LIST` (comma-separated depths, `0` = unlimited), `--mine-min-leaf N`, `--mine-seed S`, `--mine-holdout F` tune the `mine` analyzer; default `MineParams::default()`; an invalid value is a usage error (exit 2)
+- `--induce` enables concept induction (sets `[induction] enabled = true`); `--withhold-tier2` excludes the game-supplied tier-2 features from induction (requires `--induce`)
+- `--induction-rounds`, `--induction-max-thresholds`, `--induction-beam`, `--induction-top-k`, `--induction-max-promoted`, `--induction-min-train-gain`, `--induction-min-holdout-gain`, `--induction-holdout`, `--induction-probe-depth`, `--induction-soundness-tolerance`, `--induction-min-soundness-gain`, `--induction-compare-atoms`, `--induction-extended-tier1`, `--induction-seed` override `InductionParams::default()`; an invalid value is a usage error (exit 2)
+- `--label-map FILE` a TOML table `concept_name = "label"`, applied to promoted concepts at render time
 
 The `dataset` analyzer writes `dataset.jsonl` (one row per canonical, non-terminal
 position) and `dataset.json` (the dataset manifest); the `mine` analyzer writes
-`heuristics.json` (one candidate decision list per depth). The standalone `analyze`
-command takes mining parameters only from the `--mine-*` flags above, never from a run
-directory.
+`heuristics.json` (one candidate decision list per depth); the `concepts` analyzer writes
+`concepts.json` (requires `--induce`); the `vocabulary` analyzer writes
+`vocabulary.json` (requires the `mine` analyzer's `heuristics.json`, so run `mine` first).
+The standalone `analyze` command takes mining parameters only from the `--mine-*` flags
+above and induction parameters only from the `--induce`/`--induction-*`/`--label-map`
+flags above, never from a run directory.
 
 The stdout line above is printed whenever the `summary` analyzer ran; when it did not, the
 command prints `analyzers=<list> checks_pass=<bool> out=<dir>` instead.
@@ -329,9 +337,73 @@ evaluation=78bcde7c9113b250 game=tictactoe roster=ttt-benchmark-v1 reference=per
 discover=tictactoe-discover run_id=bd760ff0ace48705 heuristics=4 archive_entries=4 out=target/m2/p3-discover
 ```
 
-Flags: `--config <TOML>`, required; `--out <DIR>` overrides the experiment's own `out`.
+Flags: `--config <TOML>`, required; `--out <DIR>` overrides the experiment's own `out`;
+`--induce` and `--withhold-tier2` force the loaded config's `[induction]` fields to `true`,
+applied after `config_hash` is computed (the recorded hash stays "config as loaded").
 
-Mining and interpreter design: [docs/adr/0014-feature-dataset.md](docs/adr/0014-feature-dataset.md), [docs/adr/0015-heuristic-miner.md](docs/adr/0015-heuristic-miner.md), [docs/adr/0016-rule-interpreter.md](docs/adr/0016-rule-interpreter.md).
+With induction enabled, the forced analyzer set for the `analyze` stage becomes `dataset`,
+`concepts`, `mine`, `vocabulary` (each appended when missing), and their relative order is
+validated: `dataset` before `concepts` before `mine` before `vocabulary`; a violation is a
+usage error (exit 2). Stdout gains exactly one line, between the four stage lines and the
+`strategy=` lines: `concepts=<promoted> evaluated=<candidates scored> rounds=<rounds run>
+withhold_tier2=<bool>`. The run directory gains `concepts.json` and `vocabulary.json` (18
+files total for the full `configs/tictactoe-concepts.toml` fixture), and each archived
+candidate's discovery provenance records the induction outcome. With induction disabled
+(the default), stdout and the run-directory file set are unchanged from the block above.
+The full-scale worked example is `configs/tictactoe-concepts.toml`.
+
+```toml
+[induction]                     # optional; concept induction for the `concepts`/`mine` analyzers
+enabled = false                 # master switch; `discover --induce` forces it on
+withhold_tier2 = false          # exclude game-supplied tier-2 features; requires enabled = true
+extended_tier1 = true           # mint the extended mechanical tier-1 families when enabled
+rounds = 2                      # maximum promotion rounds
+max_thresholds = 4              # thresholds minted per numeric atom
+beam = 64                       # level-1 predicates kept for combination
+top_k = 8                       # shortlist size handed to the downstream probe
+max_promoted = 4                # concepts promoted per round, at most
+min_train_gain = 0.01           # minimum train information gain to shortlist
+min_holdout_gain = 0.005        # minimum holdout information gain to shortlist
+holdout_fraction = 0.25         # fraction of rows held out; 0.0 = no holdout
+probe_depth = 6                 # downstream CART probe depth; 0 = unlimited
+soundness_tolerance = 0.005     # allowed soundness drop when rules shrink
+min_soundness_gain = 0.001      # required soundness rise when rules only tie
+compare_atoms = false           # enumerate atom-pair comparison predicates
+seed = 0                        # induction train/holdout shuffle seed
+# label_map = "labels.toml"     # optional; TOML table `concept_name = "label"`, render-time only
+```
+
+#### Readability example
+
+From the full-scale induction fixture (`cargo run -- discover --config
+configs/tictactoe-concepts.toml`), the run's `report.md` renders the two promoted
+tier-3 concepts under `### Promoted` as:
+
+```text
+- `concept_1 [tier-3] = ((count(orbit0.free) == 1) or (count(free) == 1)) -- invented concept (round 1)`
+- `concept_2 [tier-3] = (concept_1 and (orbit0.mine >= 1)) -- invented concept (round 2)`
+```
+
+`orbit0` is the corner orbit `{0, 2, 6, 8}` of the tic-tac-toe symmetry group, so
+`concept_1` fires when exactly one corner (or only one cell) is still free, and
+`concept_2` — a round-2 concept stacked on the round-1 concept — additionally
+requires the mover to hold at least one corner. With an optional human label map
+
+```toml
+concept_1 = "last open corner"
+concept_2 = "last open corner while holding one"
+```
+
+passed at render time (`analyze --analyzers dataset,concepts --induce
+--withhold-tier2 --induction-rounds 2 --label-map labels.toml`, then `report`),
+the same bullets render with label suffixes:
+
+```text
+- `concept_1 [tier-3] = ((count(orbit0.free) == 1) or (count(free) == 1)) -- invented concept (round 1)` (label: last open corner)
+- `concept_2 [tier-3] = (concept_1 and (orbit0.mine >= 1)) -- invented concept (round 2)` (label: last open corner while holding one)
+```
+
+Mining and interpreter design: [docs/adr/0014-feature-dataset.md](docs/adr/0014-feature-dataset.md), [docs/adr/0015-heuristic-miner.md](docs/adr/0015-heuristic-miner.md), [docs/adr/0016-rule-interpreter.md](docs/adr/0016-rule-interpreter.md), [docs/adr/0017-mechanical-tier1-extension.md](docs/adr/0017-mechanical-tier1-extension.md), [docs/adr/0018-concept-induction.md](docs/adr/0018-concept-induction.md).
 
 ### Experiment config
 
@@ -434,6 +506,8 @@ error: check failed: diversity thresholds not met: canonical_coverage 0.01 < 0.5
 | `dataset.jsonl` | analyze, `dataset` analyzer | one `DatasetRow` per non-terminal canonical state: encoded feature values, legal/optimal positions, qualifying classes, label |
 | `dataset.json` | analyze, `dataset` analyzer | dataset manifest: columns (name/tier/kind), action classes, row, label and value counts |
 | `heuristics.json` | analyze, `mine` analyzer | mining report: parameters, dataset manifest, one validated decision-list candidate per depth with per-rule evidence |
+| `concepts.json` | analyze, `concepts` analyzer | concept-induction report: effective `[induction]` parameters, withheld features, per-round enumeration and promotion counts, promoted tier-3 concepts with definitions, scores, provenance and similarity |
+| `vocabulary.json` | analyze, `vocabulary` analyzer | given-versus-discovered feature usage of mined heuristics: per-candidate and overall reference counts and fractions by tier |
 | `discover.json` | discover | discover manifest: run/config/evaluation ids, archive location, per-candidate archive entry ids and headline metrics |
 | `evaluation.json` | evaluate, discover | the evaluation report: roster, config, and per-strategy tournament tallies, headline metrics, agreement and behavior signature |
 | `archive/archive.json` | evaluate, discover | strategy archive index: one `{entry_id, name, kind, sequence}` per archived strategy |

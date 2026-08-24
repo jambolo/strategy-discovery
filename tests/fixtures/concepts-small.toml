@@ -1,0 +1,31 @@
+# Small end-to-end concept-induction experiment over the generate-small sweep; tests
+# always override `out`. The [induction] values are the flag set proven to promote
+# at least one concept on this corpus.
+schema_version = 1
+name = "concepts-small"
+game = "tictactoe"
+out = "../../target/m3/concepts-small"
+
+[generate]
+sweep = "generate-small.toml"
+
+[analyze]
+analyzers = ["summary", "agreement", "dataset", "concepts", "mine", "vocabulary"]
+
+[mine]
+depths = [6]
+
+[induction]
+enabled = true
+withhold_tier2 = true
+rounds = 1
+beam = 24
+top_k = 4
+max_promoted = 2
+min_train_gain = 0.001
+min_holdout_gain = 0.0005
+holdout_fraction = 0.25
+
+[discover]
+games = 2
+roster = "roster-tiny.toml"

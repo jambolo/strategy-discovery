@@ -3,7 +3,7 @@
 //! (`GameRecord`, `PositionRecord`, `AnnotationRecord`) written by the pipeline stages.
 
 use crate::core::dsl::HeuristicStrategy;
-use crate::core::features::Tier;
+use crate::core::features::{FeatureDef, Tier};
 use crate::core::traits::GameDomain;
 use crate::discovery::agreement::AgreementCounts;
 use crate::discovery::config::CorpusError;
@@ -45,6 +45,11 @@ pub const DATASET_MANIFEST_FILE: &str = "dataset.json";
 pub const HEURISTICS_FILE: &str = "heuristics.json";
 /// File name for the `discover` stage's manifest document.
 pub const DISCOVER_FILE: &str = "discover.json";
+
+/// File name of the `concepts` analyzer's output document.
+pub const CONCEPTS_FILE: &str = "concepts.json";
+/// File name of the `vocabulary` analyzer's output document.
+pub const VOCABULARY_FILE: &str = "vocabulary.json";
 /// `MineParams::engine` value selecting the in-crate deterministic CART engine (the default).
 pub const MINE_ENGINE_CART: &str = "cart";
 /// `MineParams::engine` value selecting the opt-in `linfa-trees` engine.
@@ -627,6 +632,220 @@ impl MineParams {
     }
 }
 
+/// Concept-induction parameters: the `[induction]` experiment table. Every field defaults.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct InductionParams {
+    /// Master switch for concept induction.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Exclude the game-supplied tier-2 extractor from the dataset and vocabulary.
+    #[serde(default)]
+    pub withhold_tier2: bool,
+    /// Mint the extended mechanical tier-1 families when induction is enabled.
+    #[serde(default = "default_induction_extended_tier1")]
+    pub extended_tier1: bool,
+    /// Maximum promotion rounds.
+    #[serde(default = "default_induction_rounds")]
+    pub rounds: usize,
+    /// Thresholds minted per numeric atom.
+    #[serde(default = "default_induction_max_thresholds")]
+    pub max_thresholds: usize,
+    /// Level-1 predicates kept for combination.
+    #[serde(default = "default_induction_beam")]
+    pub beam: usize,
+    /// Shortlist size handed to the downstream probe.
+    #[serde(default = "default_induction_top_k")]
+    pub top_k: usize,
+    /// Maximum concepts promoted per round.
+    #[serde(default = "default_induction_max_promoted")]
+    pub max_promoted: usize,
+    /// Minimum train information-gain to shortlist a candidate.
+    #[serde(default = "default_induction_min_train_gain")]
+    pub min_train_gain: f64,
+    /// Minimum holdout information-gain to shortlist a candidate.
+    #[serde(default = "default_induction_min_holdout_gain")]
+    pub min_holdout_gain: f64,
+    /// Fraction of induction rows held out for evaluation, in `[0, 1)`; `0.0` = no holdout.
+    #[serde(default = "default_induction_holdout_fraction")]
+    pub holdout_fraction: f64,
+    /// Downstream CART probe depth limit; `0` = unlimited.
+    #[serde(default = "default_induction_probe_depth")]
+    pub probe_depth: usize,
+    /// Allowed soundness drop when the downstream probe's rule count shrinks.
+    #[serde(default = "default_induction_soundness_tolerance")]
+    pub soundness_tolerance: f64,
+    /// Required soundness rise when the downstream probe's rule count only ties.
+    #[serde(default = "default_induction_min_soundness_gain")]
+    pub min_soundness_gain: f64,
+    /// Enable atom-pair comparison predicates during enumeration.
+    #[serde(default)]
+    pub compare_atoms: bool,
+    /// Seed of the induction train/holdout shuffle.
+    #[serde(default)]
+    pub seed: u64,
+    /// Optional TOML file mapping concept names to human labels, applied at render time only.
+    #[serde(default)]
+    pub label_map: Option<std::path::PathBuf>,
+}
+
+/// `true`, the default for [`InductionParams::extended_tier1`].
+fn default_induction_extended_tier1() -> bool {
+    true
+}
+
+/// `2`, the default for [`InductionParams::rounds`].
+fn default_induction_rounds() -> usize {
+    2
+}
+
+/// `4`, the default for [`InductionParams::max_thresholds`].
+fn default_induction_max_thresholds() -> usize {
+    4
+}
+
+/// `64`, the default for [`InductionParams::beam`].
+fn default_induction_beam() -> usize {
+    64
+}
+
+/// `8`, the default for [`InductionParams::top_k`].
+fn default_induction_top_k() -> usize {
+    8
+}
+
+/// `4`, the default for [`InductionParams::max_promoted`].
+fn default_induction_max_promoted() -> usize {
+    4
+}
+
+/// `0.01`, the default for [`InductionParams::min_train_gain`].
+fn default_induction_min_train_gain() -> f64 {
+    0.01
+}
+
+/// `0.005`, the default for [`InductionParams::min_holdout_gain`].
+fn default_induction_min_holdout_gain() -> f64 {
+    0.005
+}
+
+/// `0.25`, the default for [`InductionParams::holdout_fraction`].
+fn default_induction_holdout_fraction() -> f64 {
+    0.25
+}
+
+/// `6`, the default for [`InductionParams::probe_depth`].
+fn default_induction_probe_depth() -> usize {
+    6
+}
+
+/// `0.005`, the default for [`InductionParams::soundness_tolerance`].
+fn default_induction_soundness_tolerance() -> f64 {
+    0.005
+}
+
+/// `0.001`, the default for [`InductionParams::min_soundness_gain`].
+fn default_induction_min_soundness_gain() -> f64 {
+    0.001
+}
+
+impl Default for InductionParams {
+    fn default() -> Self {
+        InductionParams {
+            enabled: false,
+            withhold_tier2: false,
+            extended_tier1: default_induction_extended_tier1(),
+            rounds: default_induction_rounds(),
+            max_thresholds: default_induction_max_thresholds(),
+            beam: default_induction_beam(),
+            top_k: default_induction_top_k(),
+            max_promoted: default_induction_max_promoted(),
+            min_train_gain: default_induction_min_train_gain(),
+            min_holdout_gain: default_induction_min_holdout_gain(),
+            holdout_fraction: default_induction_holdout_fraction(),
+            probe_depth: default_induction_probe_depth(),
+            soundness_tolerance: default_induction_soundness_tolerance(),
+            min_soundness_gain: default_induction_min_soundness_gain(),
+            compare_atoms: false,
+            seed: 0,
+            label_map: None,
+        }
+    }
+}
+
+impl InductionParams {
+    /// Rejects `withhold_tier2` without `enabled`, any zero count bound, a negative gain or
+    /// tolerance bound, or a `holdout_fraction` outside `[0, 1)`, each as [`CorpusError::Config`].
+    pub fn validate(&self) -> Result<(), CorpusError> {
+        if self.withhold_tier2 && !self.enabled {
+            return Err(CorpusError::Config(
+                "[induction] withhold_tier2 requires enabled = true".to_string(),
+            ));
+        }
+        if self.rounds == 0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] rounds must be >= 1, got {}",
+                self.rounds
+            )));
+        }
+        if self.max_thresholds == 0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] max_thresholds must be >= 1, got {}",
+                self.max_thresholds
+            )));
+        }
+        if self.beam == 0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] beam must be >= 1, got {}",
+                self.beam
+            )));
+        }
+        if self.top_k == 0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] top_k must be >= 1, got {}",
+                self.top_k
+            )));
+        }
+        if self.max_promoted == 0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] max_promoted must be >= 1, got {}",
+                self.max_promoted
+            )));
+        }
+        if self.min_train_gain < 0.0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] min_train_gain must be >= 0, got {}",
+                self.min_train_gain
+            )));
+        }
+        if self.min_holdout_gain < 0.0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] min_holdout_gain must be >= 0, got {}",
+                self.min_holdout_gain
+            )));
+        }
+        if self.soundness_tolerance < 0.0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] soundness_tolerance must be >= 0, got {}",
+                self.soundness_tolerance
+            )));
+        }
+        if self.min_soundness_gain < 0.0 {
+            return Err(CorpusError::Config(format!(
+                "[induction] min_soundness_gain must be >= 0, got {}",
+                self.min_soundness_gain
+            )));
+        }
+        if !(0.0..1.0).contains(&self.holdout_fraction) {
+            return Err(CorpusError::Config(format!(
+                "[induction] holdout_fraction must be in [0, 1), got {}",
+                self.holdout_fraction
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// Win/draw/loss counts of the rows reaching a rule, from the mover's perspective.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct OutcomeTally {
@@ -724,6 +943,23 @@ pub struct CandidateParams {
     pub min_leaf: usize,
 }
 
+/// Concept-induction provenance of a `discover` run that had `[induction]` enabled.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ConceptsProvenance {
+    /// `config_hash` of the effective `InductionParams`.
+    pub params_hash: String,
+    /// Whether tier-2 supplied features were withheld from the dataset.
+    pub withhold_tier2: bool,
+    /// Promotion rounds actually run.
+    pub rounds_run: usize,
+    /// Concepts promoted across all rounds.
+    pub promoted: usize,
+    /// Promoted concept names, in promotion order.
+    pub concepts: Vec<String>,
+    /// Induction train/holdout shuffle seed.
+    pub seed: u64,
+}
+
 /// Rerun-sufficient provenance of a heuristic the `discover` stage mined and archived.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DiscoveryProvenance {
@@ -749,6 +985,171 @@ pub struct DiscoveryProvenance {
     pub dataset_rows: usize,
     /// Candidate name within the mining report.
     pub candidate: String,
+    /// Concept-induction provenance, when induction was enabled; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub concepts: Option<ConceptsProvenance>,
+}
+
+/// Corpus run, effective-params hash, seed, and promotion round of a promoted concept.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ConceptProvenance {
+    /// Corpus run id the concept was induced from, if any.
+    pub run_id: Option<String>,
+    /// `config_hash` of the effective `InductionParams`.
+    pub params_hash: String,
+    /// Induction train/holdout shuffle seed.
+    pub seed: u64,
+    /// Promotion round the concept was promoted in.
+    pub round: usize,
+}
+
+/// Information-gain and downstream-probe metrics of a promoted concept.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ConceptScores {
+    /// Information gain on the training split.
+    pub train_gain: f64,
+    /// Information gain on the holdout split, when a holdout exists.
+    pub holdout_gain: Option<f64>,
+    /// Downstream probe's rule count before adding this concept.
+    pub probe_rules_before: usize,
+    /// Downstream probe's rule count after adding this concept.
+    pub probe_rules_after: usize,
+    /// Downstream probe's soundness before adding this concept.
+    pub probe_soundness_before: f64,
+    /// Downstream probe's soundness after adding this concept.
+    pub probe_soundness_after: f64,
+}
+
+/// Extensional agreement between a promoted concept and one supplied feature.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SimilarityEntry {
+    /// Name of the supplied feature compared against.
+    pub feature: String,
+    /// Fraction of rows on which the concept and the feature agree.
+    pub agreement: f64,
+}
+
+/// One concept promoted by concept induction.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct PromotedConcept {
+    /// Promoted concept name (`concept_{n}`).
+    pub name: String,
+    /// The `FeatureDef`'s `Display` string.
+    pub definition: String,
+    /// The self-contained feature definition.
+    pub def: FeatureDef,
+    /// Concept value kind; `"bool"` in v1.
+    pub kind: String,
+    /// Promotion round.
+    pub round: usize,
+    /// Gain and downstream-probe metrics.
+    pub scores: ConceptScores,
+    /// Rerun-sufficient provenance.
+    pub provenance: ConceptProvenance,
+    /// Extensional agreement with supplied features.
+    pub similarity: Vec<SimilarityEntry>,
+}
+
+/// One candidate shortlisted for downstream probing during a promotion round.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ShortlistEntry {
+    /// The candidate's feature-expression rendering.
+    pub expr: String,
+    /// Information gain on the training split.
+    pub train_gain: f64,
+    /// Information gain on the holdout split, when a holdout exists.
+    pub holdout_gain: Option<f64>,
+    /// `"promoted:concept_{n}"`, `"rejected-downstream"`, or `"duplicate"`.
+    pub outcome: String,
+}
+
+/// Per-round enumeration, deduplication, scoring, and promotion counters.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct RoundReport {
+    /// Round number.
+    pub round: usize,
+    /// Columns available to this round.
+    pub columns: usize,
+    /// Candidate predicates enumerated.
+    pub enumerated: usize,
+    /// Candidates dropped by deduplication (constant or duplicate).
+    pub deduplicated: usize,
+    /// Candidates scored.
+    pub scored: usize,
+    /// Candidates passing the gain filters.
+    pub passed: usize,
+    /// Shortlisted candidates, in shortlist order.
+    pub shortlisted: Vec<ShortlistEntry>,
+    /// Promoted concept names, in promotion order.
+    pub promoted: Vec<String>,
+}
+
+/// The `concepts` analyzer's output (`concepts.json`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ConceptReport {
+    /// Schema version this document was written under.
+    pub schema_version: u32,
+    /// Game name.
+    pub game: String,
+    /// Corpus run the dataset came from, if any.
+    pub run_id: Option<String>,
+    /// Parameters induction ran with.
+    pub params: InductionParams,
+    /// Names of features withheld from the dataset.
+    pub withheld: Vec<String>,
+    /// Dataset rows.
+    pub rows: usize,
+    /// Training rows.
+    pub train_rows: usize,
+    /// Holdout rows.
+    pub holdout_rows: usize,
+    /// Columns available before any concept was promoted.
+    pub base_columns: usize,
+    /// Action classes present in the base dataset.
+    pub base_classes: usize,
+    /// Per-round reports, in round order.
+    pub rounds: Vec<RoundReport>,
+    /// Promoted concepts, in promotion order.
+    pub promoted: Vec<PromotedConcept>,
+    /// The label map verbatim; `{}` when none was given.
+    pub labels: BTreeMap<String, String>,
+}
+
+/// Given-versus-discovered usage breakdown of a feature or the whole vocabulary.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct UsageBreakdown {
+    /// Rows or rules referencing the feature(s).
+    pub referenced: usize,
+    /// Counts by tier; keys are always exactly `"primitive"`, `"supplied"`, `"invented"`.
+    pub counts: BTreeMap<String, usize>,
+    /// Fractions by tier; keys are always exactly `"primitive"`, `"supplied"`, `"invented"`.
+    pub fractions: BTreeMap<String, f64>,
+}
+
+/// Usage breakdown for one vocabulary candidate.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CandidateUsage {
+    /// Candidate feature name.
+    pub name: String,
+    /// Usage breakdown for this candidate.
+    pub usage: UsageBreakdown,
+}
+
+/// The `vocabulary` analyzer's output (`vocabulary.json`).
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct VocabularyReport {
+    /// Schema version this document was written under.
+    pub schema_version: u32,
+    /// Game name.
+    pub game: String,
+    /// Corpus run the dataset came from, if any.
+    pub run_id: Option<String>,
+    /// Feature counts by tier; keys are always exactly `"primitive"`, `"supplied"`, `"invented"`.
+    pub tiers: BTreeMap<String, usize>,
+    /// Per-candidate usage breakdowns.
+    pub candidates: Vec<CandidateUsage>,
+    /// Overall usage breakdown across all candidates.
+    pub overall: UsageBreakdown,
 }
 
 /// One archived candidate as listed in the `discover` manifest.
@@ -1437,6 +1838,273 @@ mod tests {
     }
 
     #[test]
+    fn m3_file_consts() {
+        assert_eq!(CONCEPTS_FILE, "concepts.json");
+        assert_eq!(VOCABULARY_FILE, "vocabulary.json");
+    }
+
+    #[test]
+    fn induction_params_defaults() {
+        let expected = InductionParams {
+            enabled: false,
+            withhold_tier2: false,
+            extended_tier1: true,
+            rounds: 2,
+            max_thresholds: 4,
+            beam: 64,
+            top_k: 8,
+            max_promoted: 4,
+            min_train_gain: 0.01,
+            min_holdout_gain: 0.005,
+            holdout_fraction: 0.25,
+            probe_depth: 6,
+            soundness_tolerance: 0.005,
+            min_soundness_gain: 0.001,
+            compare_atoms: false,
+            seed: 0,
+            label_map: None,
+        };
+        assert_eq!(InductionParams::default(), expected);
+        assert_eq!(serde_json::from_str::<InductionParams>("{}").unwrap(), expected);
+        assert_eq!(toml::from_str::<InductionParams>("").unwrap(), expected);
+        assert!(toml::from_str::<InductionParams>("nope = 1").is_err());
+
+        let mut expected_partial = expected.clone();
+        expected_partial.enabled = true;
+        expected_partial.withhold_tier2 = true;
+        expected_partial.rounds = 3;
+        let parsed: InductionParams = toml::from_str("enabled = true\nwithhold_tier2 = true\nrounds = 3").unwrap();
+        assert_eq!(parsed, expected_partial);
+        assert!(parsed.validate().is_ok());
+
+        assert!(InductionParams::default().validate().is_ok());
+    }
+
+    #[test]
+    fn induction_params_validate_rejects_bad_values() {
+        fn err_msg(params: InductionParams) -> String {
+            match params.validate() {
+                Err(CorpusError::Config(msg)) => msg,
+                other => panic!("expected Config error, got {other:?}"),
+            }
+        }
+
+        let base = InductionParams::default();
+
+        let mut p = base.clone();
+        p.rounds = 0;
+        assert!(err_msg(p).contains("[induction] rounds"));
+
+        let mut p = base.clone();
+        p.max_thresholds = 0;
+        assert!(err_msg(p).contains("[induction] max_thresholds"));
+
+        let mut p = base.clone();
+        p.beam = 0;
+        assert!(err_msg(p).contains("[induction] beam"));
+
+        let mut p = base.clone();
+        p.top_k = 0;
+        assert!(err_msg(p).contains("[induction] top_k"));
+
+        let mut p = base.clone();
+        p.max_promoted = 0;
+        assert!(err_msg(p).contains("[induction] max_promoted"));
+
+        let mut p = base.clone();
+        p.min_train_gain = -0.1;
+        assert!(err_msg(p).contains("[induction] min_train_gain"));
+
+        let mut p = base.clone();
+        p.min_holdout_gain = -0.1;
+        assert!(err_msg(p).contains("[induction] min_holdout_gain"));
+
+        let mut p = base.clone();
+        p.holdout_fraction = 1.0;
+        assert!(err_msg(p).contains("[induction] holdout_fraction"));
+
+        let mut p = base.clone();
+        p.holdout_fraction = -0.1;
+        assert!(err_msg(p).contains("[induction] holdout_fraction"));
+
+        let mut p = base.clone();
+        p.soundness_tolerance = -0.1;
+        assert!(err_msg(p).contains("[induction] soundness_tolerance"));
+
+        let mut p = base.clone();
+        p.min_soundness_gain = -0.1;
+        assert!(err_msg(p).contains("[induction] min_soundness_gain"));
+
+        let mut p = base.clone();
+        p.withhold_tier2 = true;
+        p.enabled = false;
+        assert!(err_msg(p).contains("withhold_tier2 requires enabled = true"));
+
+        let mut p = base.clone();
+        p.probe_depth = 0;
+        assert!(p.validate().is_ok());
+
+        let mut p = base;
+        p.enabled = true;
+        p.withhold_tier2 = true;
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn concepts_provenance_is_optional_and_round_trips() {
+        let base_discovery = DiscoveryProvenance {
+            experiment: "e".to_string(),
+            config_hash: "abc".to_string(),
+            corpus_run_id: "r".to_string(),
+            annotations_mode: "corpus".to_string(),
+            miner: "cart-v1".to_string(),
+            params: CandidateParams {
+                engine: "cart".to_string(),
+                max_depth: 8,
+                min_leaf: 1,
+            },
+            mine_seed: 0,
+            holdout_fraction: 0.0,
+            tiers: vec!["primitive".to_string()],
+            dataset_rows: 10,
+            candidate: "mined-d8-l1".to_string(),
+            concepts: None,
+        };
+        let json = serde_json::to_string(&base_discovery).unwrap();
+        assert!(!json.contains("concepts"));
+
+        let parsed: DiscoveryProvenance = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.concepts, None);
+
+        let with_concepts = DiscoveryProvenance {
+            concepts: Some(ConceptsProvenance {
+                params_hash: "def".to_string(),
+                withhold_tier2: false,
+                rounds_run: 2,
+                promoted: 1,
+                concepts: vec!["concept_1".to_string()],
+                seed: 0,
+            }),
+            ..base_discovery
+        };
+        let json = serde_json::to_string(&with_concepts).unwrap();
+        let round_tripped: DiscoveryProvenance = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, with_concepts);
+    }
+
+    #[test]
+    fn concept_and_vocabulary_reports_round_trip() {
+        use crate::core::features::FeatureExpr;
+
+        let concept_report = ConceptReport {
+            schema_version: SCHEMA_VERSION,
+            game: "ttt".to_string(),
+            run_id: Some("run1".to_string()),
+            params: InductionParams::default(),
+            withheld: vec![],
+            rows: 10,
+            train_rows: 8,
+            holdout_rows: 2,
+            base_columns: 5,
+            base_classes: 3,
+            rounds: vec![RoundReport {
+                round: 1,
+                columns: 5,
+                enumerated: 20,
+                deduplicated: 18,
+                scored: 18,
+                passed: 3,
+                shortlisted: vec![ShortlistEntry {
+                    expr: "center".to_string(),
+                    train_gain: 0.05,
+                    holdout_gain: Some(0.04),
+                    outcome: "promoted:concept_1".to_string(),
+                }],
+                promoted: vec!["concept_1".to_string()],
+            }],
+            promoted: vec![PromotedConcept {
+                name: "concept_1".to_string(),
+                definition: "concept_1 := true".to_string(),
+                def: FeatureDef::derived(
+                    "concept_1",
+                    Tier::Invented,
+                    "invented concept (round 1)",
+                    FeatureExpr::Const {
+                        value: crate::core::features::FeatureValue::Bool(true),
+                    },
+                ),
+                kind: "bool".to_string(),
+                round: 1,
+                scores: ConceptScores {
+                    train_gain: 0.05,
+                    holdout_gain: Some(0.04),
+                    probe_rules_before: 4,
+                    probe_rules_after: 3,
+                    probe_soundness_before: 0.9,
+                    probe_soundness_after: 0.95,
+                },
+                provenance: ConceptProvenance {
+                    run_id: Some("run1".to_string()),
+                    params_hash: "abc".to_string(),
+                    seed: 0,
+                    round: 1,
+                },
+                similarity: vec![SimilarityEntry {
+                    feature: "center".to_string(),
+                    agreement: 0.99,
+                }],
+            }],
+            labels: BTreeMap::new(),
+        };
+        let json = serde_json::to_string(&concept_report).unwrap();
+        let round_tripped: ConceptReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, concept_report);
+
+        let vocabulary_report = VocabularyReport {
+            schema_version: SCHEMA_VERSION,
+            game: "ttt".to_string(),
+            run_id: Some("run1".to_string()),
+            tiers: BTreeMap::from([
+                ("primitive".to_string(), 5),
+                ("supplied".to_string(), 2),
+                ("invented".to_string(), 1),
+            ]),
+            candidates: vec![CandidateUsage {
+                name: "center".to_string(),
+                usage: UsageBreakdown {
+                    referenced: 4,
+                    counts: BTreeMap::from([
+                        ("primitive".to_string(), 4),
+                        ("supplied".to_string(), 0),
+                        ("invented".to_string(), 0),
+                    ]),
+                    fractions: BTreeMap::from([
+                        ("primitive".to_string(), 1.0),
+                        ("supplied".to_string(), 0.0),
+                        ("invented".to_string(), 0.0),
+                    ]),
+                },
+            }],
+            overall: UsageBreakdown {
+                referenced: 8,
+                counts: BTreeMap::from([
+                    ("primitive".to_string(), 5),
+                    ("supplied".to_string(), 2),
+                    ("invented".to_string(), 1),
+                ]),
+                fractions: BTreeMap::from([
+                    ("primitive".to_string(), 0.625),
+                    ("supplied".to_string(), 0.25),
+                    ("invented".to_string(), 0.125),
+                ]),
+            },
+        };
+        let json = serde_json::to_string(&vocabulary_report).unwrap();
+        let round_tripped: VocabularyReport = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped, vocabulary_report);
+    }
+
+    #[test]
     fn provenance_without_discovery_serializes_unchanged() {
         let base = Provenance {
             game: "ttt".to_string(),
@@ -1486,6 +2154,7 @@ mod tests {
                 tiers: vec!["primitive".to_string()],
                 dataset_rows: 10,
                 candidate: "mined-d8-l1".to_string(),
+                concepts: None,
             }),
             ..base
         };

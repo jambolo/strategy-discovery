@@ -35,7 +35,7 @@ Gitflow-style branching: `master` (releases), `develop` (integration), `feature/
 - `src/core/` — framework traits (`GameRules`, `GamePrimitives`, `FeatureExtractor`, `Canonicalize`, `StateEvaluator`, `Strategy`, `StrategyGenerator`, `MatchEngine`), the feature-algebra types, and the heuristic-rule DSL. **Nothing game-specific lives here.**
 - `src/games/tictactoe/` — game domain: rules, board, primitives declaration, tier-2 features, symmetry canonicalization.
 - `src/strategy/` — `game-player` engine adapters, `MinimaxStrategy` (configurable depth, seeded tie-breaks, epsilon-random), and the strategy registry/factory (named kinds: `minimax`, `random`, reserved `heuristic-rules`).
-- `src/discovery/` — corpus generation runner, annotation stage, feature dataset and heuristic miner, strategy archive.
+- `src/discovery/` — corpus generation runner, annotation stage, feature dataset and heuristic miner, concept induction, strategy archive.
 - `src/io/` — versioned record schema, JSONL (optionally Parquet) writers, replay parser.
 - `src/cli/` — one subcommand per pipeline stage.
 - `src/main.rs` — CLI bootstrap and dispatch only.

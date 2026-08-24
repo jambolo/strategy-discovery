@@ -1,6 +1,6 @@
 //! Game bundle: everything the corpus, annotation, evaluation and summary stages need from a game.
 
-use crate::core::featurizer::Featurizer;
+use crate::core::featurizer::{Featurizer, FeaturizerSpec};
 use crate::core::traits::{Canonicalize, FeatureExtractor, GamePrimitives, GameRules, StateEvaluator};
 use crate::discovery::config::CorpusError;
 use crate::strategy::engine::EngineGame;
@@ -50,36 +50,51 @@ impl<G: EngineGame> GameBundle<G> {
         Ok(EngineBundle {
             rules: self.rules.clone(),
             evaluator: evaluator.clone(),
-            featurizer: self.featurizer(true).ok().map(Arc::new),
+            featurizer: self
+                .featurizer_with(FeaturizerSpec {
+                    include_supplied: true,
+                    extended: true,
+                })
+                .ok()
+                .map(Arc::new),
         })
     }
 
-    /// Builds the game's [`Featurizer`]: tier-1 primitives plus, when `include_supplied`,
-    /// the game-supplied tier-2 extractor. `include_supplied = false` withholds tier-2
-    /// (a feature-ablation switch).
+    /// Builds the game's [`Featurizer`] per `spec`: tier-1 primitives (extended mechanical
+    /// families when `spec.extended`) plus, when `spec.include_supplied`, the game-supplied
+    /// tier-2 extractor.
     ///
     /// A game without primitives cannot featurize ([`CorpusError::Precondition`]); a
     /// vocabulary name clash is a game-definition bug ([`CorpusError::Config`]).
-    pub fn featurizer(&self, include_supplied: bool) -> Result<Featurizer<G>, CorpusError> {
+    pub fn featurizer_with(&self, spec: FeaturizerSpec) -> Result<Featurizer<G>, CorpusError> {
         let primitives = self.primitives.clone().ok_or_else(|| {
             CorpusError::Precondition(format!(
                 "game `{}` declares no primitives; feature extraction, heuristic-rules play and mining are unavailable",
                 self.name
             ))
         })?;
-        let supplied = if include_supplied {
-            self.supplied_features.clone()
-        } else {
-            None
-        };
-        Featurizer::new(
+        Featurizer::with_spec(
             self.rules.clone(),
             primitives,
             self.canonicalizer.clone(),
             self.players.clone(),
-            supplied,
+            self.supplied_features.clone(),
+            spec,
         )
         .map_err(|e| CorpusError::Config(format!("game `{}` feature vocabulary: {e}", self.name)))
+    }
+
+    /// Builds the game's [`Featurizer`]: tier-1 primitives (non-extended) plus, when
+    /// `include_supplied`, the game-supplied tier-2 extractor. `include_supplied = false`
+    /// withholds tier-2 (a feature-ablation switch).
+    ///
+    /// A game without primitives cannot featurize ([`CorpusError::Precondition`]); a
+    /// vocabulary name clash is a game-definition bug ([`CorpusError::Config`]).
+    pub fn featurizer(&self, include_supplied: bool) -> Result<Featurizer<G>, CorpusError> {
+        self.featurizer_with(FeaturizerSpec {
+            include_supplied,
+            extended: false,
+        })
     }
 
     /// `(canonical_state, transform.as_slice().to_vec())`, or `(state.clone(), vec![])` without

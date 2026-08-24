@@ -13,12 +13,14 @@ pub mod dataset;
 pub mod discover;
 pub mod evaluate;
 pub mod experiment;
+pub mod induce;
 pub mod match_engine;
 pub mod mine;
 pub mod solver;
 pub mod summary;
 pub mod tournament;
 pub mod tree;
+pub mod vocabulary;
 
 pub use match_engine::{RayonMatchEngine, game_seed, play_game, player_seed, splitmix64};
 
@@ -42,8 +44,10 @@ pub use experiment::{
     AnalyzeSection, AnnotateSection, DiscoverSection, ExperimentConfig, GenerateSection, ReportSection, ResolvedDiscover,
     ResolvedExperiment, StrategyFile, SweepSource, load_experiment, resolve_experiment,
 };
+pub use induce::{ConceptsAnalyzer, induce_concepts};
 pub use mine::{MineAnalyzer, Miner};
 pub use solver::{ExhaustiveSolver, Solved, SolverError, reachable_states};
 pub use summary::{CorpusSummary, DiversityThresholds, OutcomeCounts, SummaryAnalyzer, analyze_corpus, summarize, verify_corpus};
 pub use tournament::{TournamentConfig, TournamentRun, default_reference, run_tournament, run_tournament_detailed};
 pub use tree::{Node, Tree};
+pub use vocabulary::VocabularyAnalyzer;

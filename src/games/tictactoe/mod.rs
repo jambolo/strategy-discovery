@@ -2,7 +2,7 @@
 //! evaluator, and the `game-player` engine adapter. Only this module may know anything about
 //! tic-tac-toe.
 
-use crate::core::featurizer::Featurizer;
+use crate::core::featurizer::{Featurizer, FeaturizerSpec};
 use crate::strategy::registry::EngineBundle;
 use std::sync::Arc;
 
@@ -29,12 +29,16 @@ pub fn engine_bundle() -> EngineBundle<TicTacToe> {
         rules: Arc::new(TicTacToeRules),
         evaluator: Arc::new(TicTacToeEvaluator),
         featurizer: Some(Arc::new(
-            Featurizer::new(
+            Featurizer::with_spec(
                 Arc::new(rules::TicTacToeRules),
                 Arc::new(primitives::TicTacToePrimitives),
                 Some(Arc::new(canonical::TicTacToeCanonicalizer::new())),
                 vec![Player::X, Player::O],
                 Some(Arc::new(features::TicTacToeFeatures)),
+                FeaturizerSpec {
+                    include_supplied: true,
+                    extended: true,
+                },
             )
             .expect("tic-tac-toe feature vocabulary is duplicate-free"),
         )),

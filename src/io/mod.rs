@@ -11,12 +11,14 @@ pub use jsonl::{JsonlReader, JsonlWriter, read_json, read_jsonl, write_json_pret
 pub use replay::{final_state, replay};
 pub use schema::{
     ANALYZE_FILE, ANNOTATE_FILE, ANNOTATIONS_FILE, ARCHIVE_ENTRIES_FILE, ARCHIVE_FILE, AgreementSummary, AnnotationRecord,
-    AnnotationSource, ArchiveEntry, ArchiveIndex, ArchiveIndexEntry, BehaviorSignature, CandidateParams, CellKey, CorpusGame,
-    DATASET_FILE, DATASET_MANIFEST_FILE, DISCOVER_FILE, DatasetColumn, DatasetManifest, DatasetRow, DiscoverCandidate,
-    DiscoverManifest, DiscoveryProvenance, EVALUATION_FILE, EvaluationConfig, EvaluationReport, GAMES_FILE, GameRecord,
-    HEURISTICS_FILE, Headline, MINE_ENGINE_CART, MINE_ENGINE_LINFA_TREES, MineParams, MinedHeuristic, MiningReport, Novelty,
-    OpponentResult, OutcomeTally, POSITIONS_FILE, PairingResult, PositionRecord, Provenance, RUN_FILE, RuleEvidence,
-    SCHEMA_VERSION, SUMMARY_FILE, StrategyEvaluation, Tally, TournamentResult, check_schema_version,
+    AnnotationSource, ArchiveEntry, ArchiveIndex, ArchiveIndexEntry, BehaviorSignature, CONCEPTS_FILE, CandidateParams,
+    CandidateUsage, CellKey, ConceptProvenance, ConceptReport, ConceptScores, ConceptsProvenance, CorpusGame, DATASET_FILE,
+    DATASET_MANIFEST_FILE, DISCOVER_FILE, DatasetColumn, DatasetManifest, DatasetRow, DiscoverCandidate, DiscoverManifest,
+    DiscoveryProvenance, EVALUATION_FILE, EvaluationConfig, EvaluationReport, GAMES_FILE, GameRecord, HEURISTICS_FILE, Headline,
+    InductionParams, MINE_ENGINE_CART, MINE_ENGINE_LINFA_TREES, MineParams, MinedHeuristic, MiningReport, Novelty, OpponentResult,
+    OutcomeTally, POSITIONS_FILE, PairingResult, PositionRecord, PromotedConcept, Provenance, RUN_FILE, RoundReport, RuleEvidence,
+    SCHEMA_VERSION, SUMMARY_FILE, ShortlistEntry, SimilarityEntry, StrategyEvaluation, Tally, TournamentResult, UsageBreakdown,
+    VOCABULARY_FILE, VocabularyReport, check_schema_version,
 };
 
 use std::path::PathBuf;

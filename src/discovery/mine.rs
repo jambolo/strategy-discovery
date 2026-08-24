@@ -20,16 +20,16 @@ use rand::seq::SliceRandom;
 use rand_chacha::ChaCha8Rng;
 
 use crate::core::dsl::{ActionSelector, HeuristicStrategy, Rule};
-use crate::core::features::FeatureExpr;
+use crate::core::features::{FeatureDef, FeatureExpr};
 use crate::core::featurizer::Featurizer;
 use crate::core::traits::{GameDomain, GeneratorError, StrategyGenerator};
 use crate::discovery::analyze::{AnalyzeContext, AnalyzeOptions, Analyzer, AnalyzerOutput};
 use crate::discovery::config::CorpusError;
-use crate::discovery::dataset::{Dataset, dataset_from_context};
+use crate::discovery::dataset::{Dataset, dataset_from_context, induction_spec};
 use crate::discovery::tree::{self, Node, Tree};
 use crate::io::{
-    CorpusGame, HEURISTICS_FILE, IoError, MINE_ENGINE_CART, MINE_ENGINE_LINFA_TREES, MineParams, MinedHeuristic, MiningReport,
-    OutcomeTally, RuleEvidence, SCHEMA_VERSION,
+    CONCEPTS_FILE, ConceptReport, CorpusGame, HEURISTICS_FILE, IoError, MINE_ENGINE_CART, MINE_ENGINE_LINFA_TREES, MineParams,
+    MinedHeuristic, MiningReport, OutcomeTally, RuleEvidence, SCHEMA_VERSION, read_json,
 };
 use crate::strategy::engine::EngineGame;
 
@@ -109,8 +109,9 @@ fn candidate_name(engine: &str, depth: usize, min_leaf: usize) -> String {
 
 /// Splits `0..rows` into (train, holdout) index sets. `fraction == 0.0` trains on every row in
 /// order with no RNG created; otherwise the indices are shuffled with a seeded RNG, the last
-/// `floor(rows * fraction)` held out, and both sets sorted ascending.
-fn split_train_holdout(rows: usize, seed: u64, fraction: f64) -> (Vec<usize>, Vec<usize>) {
+/// `floor(rows * fraction)` held out, and both sets sorted ascending. Shared with the
+/// concept-induction module, which uses it for its own train/holdout split.
+pub(crate) fn split_train_holdout(rows: usize, seed: u64, fraction: f64) -> (Vec<usize>, Vec<usize>) {
     if fraction == 0.0 {
         return ((0..rows).collect(), Vec::new());
     }
@@ -325,8 +326,9 @@ fn fit_linfa_tree(
 }
 
 /// Fits and converts one candidate: one tree at `depth`/`min_leaf` over `engine`, relabeled,
-/// converted to a decision list, and evaluated over `train_idx`/`holdout_idx`.
-fn mine_one<G: GameDomain>(
+/// converted to a decision list, and evaluated over `train_idx`/`holdout_idx`. Shared with the
+/// concept-induction module, which uses it as its downstream promotion probe.
+pub(crate) fn mine_one<G: GameDomain>(
     dataset: &Dataset<G>,
     train_idx: &[usize],
     holdout_idx: &[usize],
@@ -539,7 +541,8 @@ impl<G: GameDomain> StrategyGenerator<G> for Miner<G> {
 }
 
 /// The `mine` analyzer: induces ordered heuristic rule lists from the feature dataset, writing
-/// `heuristics.json`.
+/// `heuristics.json`. When `[induction]` is enabled the analyzer reads promoted concepts from
+/// `concepts.json` and mines over the concept-augmented dataset and vocabulary.
 pub struct MineAnalyzer;
 
 impl<G: EngineGame + CorpusGame> Analyzer<G> for MineAnalyzer
@@ -557,8 +560,27 @@ where
     }
     fn run(&self, ctx: &AnalyzeContext<'_, G>, options: &AnalyzeOptions) -> Result<AnalyzerOutput, CorpusError> {
         options.mine.validate()?;
-        let dataset = dataset_from_context(ctx)?;
-        let featurizer = ctx.bundle.featurizer(true)?;
+        options.induction.validate()?;
+        let spec = induction_spec(&options.induction);
+        let derived: Vec<FeatureDef> = if options.induction.enabled {
+            let path = ctx.corpus_dir.join(CONCEPTS_FILE);
+            if !path.is_file() {
+                return Err(CorpusError::Precondition(
+                    "concepts.json not found; run the `concepts` analyzer before `mine`".to_string(),
+                ));
+            }
+            let report: ConceptReport = read_json(&path)?;
+            report.promoted.iter().map(|p| p.def.clone()).collect()
+        } else {
+            Vec::new()
+        };
+        let dataset = dataset_from_context(ctx, spec, &derived)?;
+        let mut featurizer = ctx.bundle.featurizer_with(spec)?;
+        for def in &derived {
+            featurizer
+                .push_derived(def.clone())
+                .map_err(|e| CorpusError::Config(format!("pushing promoted concept `{}`: {e}", def.name)))?;
+        }
         let mut miner = Miner::new(Arc::new(featurizer), options.mine.clone());
         let candidates = miner
             .generate(&dataset, options.mine.seed)
@@ -669,8 +691,9 @@ fn render_mine(report: &MiningReport) -> String {
 mod tests {
     use super::*;
     use crate::core::features::{CmpOp, Tier};
+    use crate::discovery::analyze::{AnalyzeContext, GameRec, PosRec};
     use crate::games::tictactoe::{Board, TicTacToe, TicTacToeRules, game_bundle};
-    use crate::io::{DatasetColumn, DatasetManifest, DatasetRow};
+    use crate::io::{DatasetColumn, DatasetManifest, DatasetRow, InductionParams};
     use std::collections::{BTreeMap, BTreeSet};
 
     fn toy_dataset() -> Dataset<TicTacToe> {
@@ -1045,6 +1068,32 @@ mod tests {
                     "heading `{line}` not followed by a blank line"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn mine_requires_concepts_json_when_induction_enabled() {
+        let bundle = game_bundle();
+        let dir = tempfile::tempdir().unwrap();
+        let games: Vec<GameRec<TicTacToe>> = Vec::new();
+        let positions: Vec<PosRec<TicTacToe>> = Vec::new();
+        let ctx = AnalyzeContext::new(&bundle, dir.path(), "run".to_string(), &games, &positions);
+        let options = AnalyzeOptions {
+            induction: InductionParams {
+                enabled: true,
+                ..Default::default()
+            },
+            ..AnalyzeOptions::default()
+        };
+
+        let result = <MineAnalyzer as Analyzer<TicTacToe>>::run(&MineAnalyzer, &ctx, &options);
+
+        match result {
+            Err(e) => assert!(
+                e.to_string()
+                    .contains("concepts.json not found; run the `concepts` analyzer before `mine`")
+            ),
+            Ok(_) => panic!("expected Err"),
         }
     }
 }
