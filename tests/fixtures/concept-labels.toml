@@ -1,0 +1,2 @@
+# Human label map for promoted concepts; applied at render time only.
+concept_1 = "first invented concept"

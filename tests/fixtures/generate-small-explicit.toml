@@ -1,0 +1,32 @@
+schema_version = 1
+game = "tictactoe"
+seed = 20260821
+games_per_cell = 4
+pairings = [["random", "random"], ["random", "depth-2"], ["random", "perfect"], ["depth-2", "random"], ["depth-2", "depth-2"], ["depth-2", "perfect"], ["perfect", "random"], ["perfect", "depth-2"], ["perfect", "perfect"]]
+evaluators = ["default"]
+random_opening_plies = [0, 2]
+
+[[strategies]]
+name = "random"
+[strategies.spec]
+kind = "random"
+
+[[strategies]]
+name = "depth-2"
+[strategies.spec]
+kind = "minimax"
+depth = 2
+
+[[strategies]]
+name = "perfect"
+[strategies.spec]
+kind = "minimax"
+depth = 9
+tie_break = "engine"
+
+[[openings]]
+name = "none"
+
+[[openings]]
+name = "center"
+actions = [4]

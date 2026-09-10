@@ -1,0 +1,14 @@
+schema_version = 1
+
+[[strategies]]
+name = "empty"
+[strategies.spec]
+kind = "heuristic-rules"
+[strategies.spec.heuristic]
+name = "empty"
+kind = "heuristic-rules"
+rules = []
+[strategies.spec.heuristic.definitions]
+defs = []
+[strategies.spec.heuristic.fallback]
+select = "any-legal"

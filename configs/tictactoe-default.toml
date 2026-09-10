@@ -1,0 +1,7 @@
+# Default tic-tac-toe corpus sweep: every field except the master seed and the per-cell game
+# count is defaulted from the game bundle, giving the 7 benchmark-roster strategies crossed
+# into 49 ordered pairings with the default evaluator and no forced opening.
+schema_version = 1
+game = "tictactoe"
+seed = 20260821
+games_per_cell = 20

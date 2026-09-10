@@ -1,0 +1,19 @@
+# Small end-to-end discovery experiment over the generate-small sweep; tests always
+# override `out`.
+schema_version = 1
+name = "discover-small"
+game = "tictactoe"
+out = "../../target/m2/discover-small"
+
+[generate]
+sweep = "generate-small.toml"
+
+[analyze]
+analyzers = ["summary", "dataset", "mine"]
+
+[mine]
+depths = [6]
+
+[discover]
+games = 2
+roster = "roster-tiny.toml"

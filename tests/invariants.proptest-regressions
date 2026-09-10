@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 96a8df08a4dc0f6e86bd5de7fc7e476ff934e21a121260ce95752c6d9abcc197 # shrinks to expr = And { exprs: [Cmp { op: Eq, lhs: Const { value: Bool(false) }, rhs: Const { value: Float(-57071.173489079716) } }] }
+cc c8ed0fa8c3fe721c2aa20de81283a654bb2ace2fd0108007a5857c57715fe886 # shrinks to spec = HeuristicRules { heuristic: HeuristicStrategy { name: "a", kind: "heuristic-rules", definitions: FeatureVocabulary { defs: [] }, rules: [Rule { name: "a", priority: 0, condition: Contains { set: Not { expr: Ref { name: "q_3_l" } }, element: Const { value: Set({0, 7}) } }, action: TargetIn { expr: SetOp { op: Difference, lhs: Const { value: Set({2, 7}) }, rhs: Const { value: Float(935208.2998742997) } } } }], fallback: AnyLegal } }
+cc 15f4f8870497f9ac42ba2eaca1fd30cbeb24fe58b9f929a9418e82ef2670f850 # shrinks to h = HeuristicStrategy { name: "a", kind: "heuristic-rules", definitions: FeatureVocabulary { defs: [] }, rules: [], fallback: TargetIn { expr: SetOp { op: Union, lhs: Const { value: Bool(false) }, rhs: Const { value: Float(-261601.74642673362) } } } }
